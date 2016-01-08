@@ -3,9 +3,9 @@ On the user deployment machine.
 This is all done from the command line.
 I am guessing if you are on window your best bet might be to use powershell
 Install:
-    Boto: pip install boto3         (see https://boto3.readthedocs.org/en/latest/guide/quickstart.html)
-    AWSCLI: pip install awscli      (http://docs.aws.amazon.com/cli/latest/reference/index.html#cli-aws)
-    fabric: pip install fabric
+- Boto: pip install boto3         (see https://boto3.readthedocs.org/en/latest/guide/quickstart.html)
+- AWSCLI: pip install awscli      (http://docs.aws.amazon.com/cli/latest/reference/index.html#cli-aws)
+- fabric: pip install fabric
     
 This should all be done in boto by running fab once cloned
 Decide if we run from shell or in fabfile in any case:
