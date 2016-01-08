@@ -1,12 +1,13 @@
-Instructions
-  On the user deployment machine.
-  This is all done from the command line.
-  I am guessing if you are on window your best bet might be to use powershell
-  Install:
+#Instructions
+On the user deployment machine.
+This is all done from the command line.
+I am guessing if you are on window your best bet might be to use powershell
+Install:
     Boto: pip install boto3         (see https://boto3.readthedocs.org/en/latest/guide/quickstart.html)
     AWSCLI: pip install awscli      (http://docs.aws.amazon.com/cli/latest/reference/index.html#cli-aws)
     fabric: pip install fabric
     
+This should all be done in boto by running fab once cloned
 Decide if we run from shell or in fabfile in any case:
 aws iam create-group --group-name root_YMAC_return
 aws iam create-group --group-name YMAC_return_basic
@@ -26,3 +27,7 @@ aws iam add-user-to-group --group-name YMAC_return_basic --user-name kjames
 
 # Next we will add users to groups
 aws iam attach-group-policy
+
+# Using boto, fabric  we will create our instances S3, EC2, RCS
+
+Create our Resources groups
