@@ -67,9 +67,9 @@ SYD_AMI_IDs = {'Amazon':'ami-48d38c2b', 'Ubuntu':'ami-69631053',
                 'New':'ami-d9fe9be3','CentOS':'ami-5d254067','SLES':'ami-0f510a6c'}
 
 #### This should be replaced by another key and security group
-AWS_REGION = 'us-east-1'
-AWS_PROFILE = 'NGAS'
-KEY_NAME = 'icrar_ngas'
+AWS_REGION = 'ap-southeast-2'
+AWS_PROFILE = 'YMACRETURN'
+KEY_NAME = 'ymac_return'
 AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
 AWS_SEC_GROUP = 'NGAS' # Security group allows SSH and other ports
 
