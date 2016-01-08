@@ -36,7 +36,6 @@ import glob, inspect
 import boto, boto.ec2
 import os
 import time
-import flask_test
 
 from fabric.api import run, sudo, put, env, require, local, task
 from fabric.context_managers import cd, hide, settings
@@ -64,7 +63,8 @@ BRANCH = 'master'    # this is controlling which branch is used in git clone
 # The AMI Ids are correct for the US-EAST1 region
 AMI_IDs = {'New':'ami-7c807d14', 'CentOS':'ami-aecd60c7', 'SLES':'ami-e8084981'}
 # Probably want to change region for us to ap-southeast-2
-SYD_AMI_IDs = {'New':'ami-d9fe9be3','CentOS':'ami-5d254067','SLES':'ami-3760040d'}
+SYD_AMI_IDs = {'Amazon':'ami-48d38c2b', 'Ubuntu':'ami-69631053', 
+                'New':'ami-d9fe9be3','CentOS':'ami-5d254067','SLES':'ami-0f510a6c'}
 
 #### This should be replaced by another key and security group
 AWS_REGION = 'us-east-1'
