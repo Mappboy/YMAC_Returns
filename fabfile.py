@@ -29,8 +29,10 @@ For a local installation under a normal user without sudo access
 fab -u `whoami` -H <IP address> -f machine-setup/deploy.py user_deploy
 """
 #TODO:
-# 1 : Data base problem
-# 2 : Supervisor 
+# 1 : Major task at the moment is migratation from boto to boto3
+# 2 : Read up on elastic ip addresses
+# 3 : Read up on S3, RDS, Glacier, Route 53
+# 4 : Proper naming of groups, users etc 
 import glob, inspect
 
 import boto3
@@ -57,14 +59,16 @@ except:
 thisDir = os.path.dirname(os.path.realpath(__file__))
 
 USERNAME = 'ec2-user'
-POSTFIX = False
+POSTFIX = False 	 # Postfix is an SMTP mail server
 BRANCH = 'master'    # this is controlling which branch is used in git clone
 
-# The AMI Ids are correct for the US-EAST1 region
-AMI_IDs = {'New':'ami-7c807d14', 'CentOS':'ami-aecd60c7', 'SLES':'ami-e8084981'}
+# TODO Check all AMIs are correct
 # Probably want to change region for us to ap-southeast-2
-SYD_AMI_IDs = {'Amazon':'ami-48d38c2b', 'Ubuntu':'ami-69631053', 
-                'New':'ami-d9fe9be3','CentOS':'ami-5d254067','SLES':'ami-0f510a6c'}
+SYD_AMI_IDs = {'Amazon':'ami-48d38c2b', 
+				'Ubuntu':'ami-69631053', 
+                'New':'ami-d9fe9be3',
+                'CentOS':'ami-5d254067',
+                'SLES':'ami-0f510a6c'}
 
 #### This should be replaced by another key and security group
 AWS_REGION = 'ap-southeast-2'
@@ -98,6 +102,7 @@ APP_DEF_DB = '/home/YMAC_Return/YMAC_Return_portal/YMAC_Return/YMAC_Return.db'
 #User will have to change and ensure they can pull from git
 GITUSER = 'pooli3'
 GITREPO = 'github.com/Pooli3/YMAC_Returns'
+MUKURTUREPO = 'github.com/MukurtuCMS/mukurtucms'
 
 #Keep track of hosts
 HOSTS_FILE = '../logs/hosts_file'
@@ -108,7 +113,23 @@ ssh.util.log_to_file('../logs/setup.log',10)
 #Check Boto 
 BOTO_CONFIG = os.path.expanduser('~/.boto')
 
+# TODO check all our packages required
 #Need to insure we have Apache, Mysql, MemCached, Drush, Python, Git, Php, Supervisor
+# Need to include sudo a2enmod rewrite for mod_rewrite
+# To Permit changes in .htacccess
+#sudo nano /etc/apache2/sites-available/default
+#Once inside that file, find the following section, and change the line that says AllowOverride from None to All. The section should now look like this:
+
+# <Directory /var/www/>
+#                Options Indexes FollowSymLinks MultiViews
+#                AllowOverride All
+#                Order allow,deny
+#                allow from all
+ #</Directory>
+#After you save and exit that file, restart apache. .htacess files will now be available for all of your sites.
+#sudo service apache2 restart
+
+
 YUM_PACKAGES = [
    'autoconf',
    'python27-devel',
@@ -127,7 +148,8 @@ APT_PACKAGES = [
         'sqlite3',
         'libsqlite3-dev',
         'httpd24',
-        'supervisor'
+        'supervisor',
+        'apache2'
         ]
 
 
