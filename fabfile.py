@@ -36,6 +36,7 @@ fab -u `whoami` -H <IP address> -f machine-setup/deploy.py user_deploy
 import glob, inspect
 
 import boto3
+from botocore.exceptions import ClientError
 import os
 import time
 
@@ -64,7 +65,7 @@ BRANCH = 'master'    # this is controlling which branch is used in git clone
 
 # TODO Check all AMIs are correct
 # Probably want to change region for us to ap-southeast-2
-SYD_AMI_IDs = {'Amazon':'ami-48d38c2b', 
+AMI_IDs = {'Amazon':'ami-48d38c2b', 
 				'Ubuntu':'ami-69631053', 
                 'New':'ami-d9fe9be3',
                 'CentOS':'ami-5d254067',
@@ -86,7 +87,22 @@ INSTANCES_FILE = os.path.expanduser('~/.aws/aws_instances')
 #### This should be replaced by another key and security group
 AWS_KEY = os.path.expanduser('~/.ssh/ymac_main.pem')
 KEY_NAME = 'ymac_main'
-SECURITY_GROUPS = ['YMAC_ROOT', 'YMAC_RETURN_BASIC']
+SECURITY_GROUPS = ['YMAC_ROOT', 'YMAC_return_basic']
+ADMIN_POLICIES = [ 
+					'AmazonRDSFullAccess',
+ 					'AmazonEC2FullAccess',
+					'AmazonS3FullAccess',
+ 					'AmazonRoute53DomainsFullAccess',
+ 					'AdministratorAccess',
+					'AmazonGlacierFullAccess',
+					'IAMFullAccess'
+					]
+BASIC_POLICIES = [
+					'AmazonGlacierReadOnlyAccess',
+					'AmazonRDSReadOnlyAccess',
+ 					'AmazonEC2ReadOnlyAccess',
+					'AmazonS3ReadOnlyAccess',
+				]
 ADMINGROUP = SECURITY_GROUPS[0]
 
 ####
@@ -105,10 +121,10 @@ GITREPO = 'github.com/Pooli3/YMAC_Returns'
 MUKURTUREPO = 'github.com/MukurtuCMS/mukurtucms'
 
 #Keep track of hosts
-HOSTS_FILE = '../logs/hosts_file'
+HOSTS_FILE = 'logs/hosts_file'
 
 #Keep log of process
-ssh.util.log_to_file('../logs/setup.log',10)
+ssh.util.log_to_file('logs/setup.log',10)
 
 #Check Boto 
 BOTO_CONFIG = os.path.expanduser('~/.boto')
@@ -172,24 +188,79 @@ def create_aws_user_groups():
 	"""
 	Creates users and groups for AWS with specific permissions
 	"""
+	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
 	client = boto3.client('iam')
+
+	try:
+		get_groups = client.list_groups()['Groups']
+		created_groups = [ group['GroupName'] for group in  [ json for json in get_groups ] ]
+	except:
+		puts( red("Couldn't get group list. Code {HTTPStatusCode} ".format(**get_groups['ResponseMetadata'])) )
 	#Create security groups
 	for sg in SECURITY_GROUPS:
-		client.create_group(GroupName=sg)
+		if sg not in created_groups:
+			try:
+				client.create_group(GroupName=sg)
+			except ClientError as ce:
+				puts( red("Problem creating {group} error is {message}".format(group=sg,message=ce.message)))
 	#Create users and attach to groups
 	for username in USERS:
-		client.create_user(UserName=username)
+		try:
+			get_users = client.list_users()['Users'] 
+			created_users = [ user['UserName'] for user in  [ json for json in get_users ] ]
+		except:
+			puts( red("Couldn't get user list {HTTPStatusCode}".format(**get_users['ResponseMetadata']) ) )
+		if username not in created_users:
+			try:
+				client.create_user(UserName=username)
+			except ClientError as ce:
+				puts( red("Problem creating {user} error is {message}".format(user=username,message=ce.message)))
+		#Create our admins
 		if username in ADMINISTRATORS:
-			client.add_user_to_group(GroupName=ADMINGROUP,
+			try:
+				client.add_user_to_group(GroupName=ADMINGROUP,
 									UserName=username
-				)
+										)
+			except ClientError as ce:
+				puts( red("Problem attaching {user} \
+					to ADMIN GROUP error is {message}".format(
+														user=username,
+														message=ce.message)))
 		else:
 			for groups in SECURITY_GROUPS:
 				if groups not in ADMINGROUP:
-					client.add_user_to_group(GroupName=groups,
+					try:
+						client.add_user_to_group(GroupName=groups,
 											UserName=username)
-	#Attach users to sec groups
-
+					except ClientError as ce:
+						puts( red("Problem attaching {user} \
+							to {group} error is {message}".format(
+																group=groups,
+																user=username,
+																message=ce.message)))
+	#Attach our security policies to our groups
+	arn_polstr = "arn:aws:iam::aws:policy/"
+	for policy in ADMIN_POLICIES:
+		pol_arn = arn_polstr + policy
+		try:
+			client.attach_group_policy(GroupName=ADMINGROUP,
+									PolicyArn=pol_arn)
+		except ClientError as ce:
+			puts( red("Problem attaching policy {policy}  to {group} error is {message}".format(
+				policy=pol_arn,
+				group=ADMINGROUP,
+				message=ce.message)))
+	for policy in BASIC_POLICIES:
+		pol_arn = arn_polstr + policy
+		try:
+			client.attach_group_policy(GroupName=SECURITY_GROUPS[1],
+									PolicyArn=pol_arn)
+		except ClientError as ce:
+			puts( red("Problem attaching policy {policy}  to {group} error is {message}".format(
+				policy=pol_arn,
+				group=SECURITY_GROUPS[1],
+				message=ce.message)))
+	puts(green("\n***** Completed Setting up User, Groups and Policies *****\n"))
 
 
 @task
