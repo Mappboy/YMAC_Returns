@@ -33,7 +33,7 @@ fab -u `whoami` -H <IP address> -f machine-setup/deploy.py user_deploy
 # 2 : Supervisor 
 import glob, inspect
 
-import boto, boto.ec2
+import boto3
 import os
 import time
 
@@ -71,31 +71,33 @@ AWS_REGION = 'ap-southeast-2'
 AWS_PROFILE = 'YMACRETURN'
 KEY_NAME = 'ymac_return'
 AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
-AWS_SEC_GROUP = 'NGAS' # Security group allows SSH and other ports
+AWS_SEC_GROUP = 'YMACRETURN' # Security group allows SSH and other ports
 
 AMI_NAME = 'New'
 AMI_ID = AMI_IDs[AMI_NAME]
-INSTANCE_NAME = 'RASVAMT'
+INSTANCE_NAME = 'YMAC_RETURN_YINHAWANGA'
 INSTANCE_TYPE = 't1.micro'
 INSTANCES_FILE = os.path.expanduser('~/.aws/aws_instances')
 
 #### This should be replaced by another key and security group
-AWS_KEY = os.path.expanduser('~/.ssh/icrar_ngas.pem')
-KEY_NAME = 'icrar_ngas'
-#SECURITY_GROUPS = {'RASVAMT':'Allows ssh with RASVAMT'} # Security group allows SSH and other ports
-SECURITY_GROUPS = ['NGAS']
+AWS_KEY = os.path.expanduser('~/.ssh/ymac_main.pem')
+KEY_NAME = 'ymac_main'
+SECURITY_GROUPS = ['YMAC_ROOT', 'YMAC_RETURN_BASIC']
+ADMINGROUP = SECURITY_GROUPS[0]
+
 ####
 ELASTIC_IP = 'False'
 APP_PYTHON_VERSION = '2.7'
 APP_PYTHON_URL = 'http://www.python.org/ftp/python/2.7.6/Python-2.7.6.tar.bz2'
-USERS = ['rasvamt']
-GROUP = 'rasvamt_user'
-APP_DIR = 'rasvamt_portal' # runtime directory
-APP_DEF_DB = '/home/rasvamt/rasvamt_portal/RASVAMT/rasvamt.db'
+USERS = ['cjpoole','onorris','jtillman','spashby','kjames']
+ADMINISTRATORS = ['cjpoole','jtillman']
+GROUP = 'YMAC_Return_user'
+APP_DIR = 'YMAC_Return_portal' # runtime directory
+APP_DEF_DB = '/home/YMAC_Return/YMAC_Return_portal/YMAC_Return/YMAC_Return.db'
 
 #User will have to change and ensure they can pull from git
 GITUSER = 'pooli3'
-GITREPO = 'github.com/ICRAR/RASVAMT'
+GITREPO = 'github.com/Pooli3/YMAC_Returns'
 
 #Keep track of hosts
 HOSTS_FILE = '../logs/hosts_file'
@@ -106,6 +108,7 @@ ssh.util.log_to_file('../logs/setup.log',10)
 #Check Boto 
 BOTO_CONFIG = os.path.expanduser('~/.boto')
 
+#Need to insure we have Apache, Mysql, MemCached, Drush, Python, Git, Php, Supervisor
 YUM_PACKAGES = [
    'autoconf',
    'python27-devel',
@@ -141,6 +144,31 @@ PUBLIC_KEYS = os.path.expanduser('~/.ssh')
 # WEB_HOST = 0
 # UPLOAD_HOST = 1
 # DOWNLOAD_HOST = 2
+
+@task
+def create_aws_user_groups():
+	"""
+	Creates users and groups for AWS with specific permissions
+	"""
+	client = boto3.client('iam')
+	#Create security groups
+	for sg in SECURITY_GROUPS:
+		client.create_group(GroupName=sg)
+	#Create users and attach to groups
+	for username in USERS:
+		client.create_user(UserName=username)
+		if username in ADMINISTRATORS:
+			client.add_user_to_group(GroupName=ADMINGROUP,
+									UserName=username
+				)
+		else:
+			for groups in SECURITY_GROUPS:
+				if groups not in ADMINGROUP:
+					client.add_user_to_group(GroupName=groups,
+											UserName=username)
+	#Attach users to sec groups
+
+
 
 @task
 def connect():
@@ -610,7 +638,7 @@ def git_pull():
     Update repo
     """
     copy_public_keys()
-    with cd(env.APP_DIR_ABS+'/RASVAMT'):
+    with cd(env.APP_DIR_ABS+'/YMAC_Return'):
         run('git pull')
 
 @task
@@ -749,12 +777,12 @@ def postfix_config():
 @task
 def user_setup():
     """
-    setup rasvamt users.
+    setup YMAC_Return users.
 
     TODO: sort out the ssh keys
     TODO: User permissions
-    TODO: ec2-user can't access rasvamt_portal
-    TODO: rasvamt can't sudo without passwd
+    TODO: ec2-user can't access YMAC_Return_portal
+    TODO: YMAC_Return can't sudo without passwd
     """
 
     set_env()
@@ -773,14 +801,14 @@ def user_setup():
     #change to allow group permissions to acces home
         #sudo('chmod g+rwx /home/{0}/'.format(user))
         
-    # create RASVAMT directories and chown to correct user and group
+    # create YMAC_Return directories and chown to correct user and group
     sudo('mkdir -p {0}'.format(env.APP_DIR_ABS))
     # This not working for some reason
     sudo('chown -R {0}:{1} {2}'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
     
     #These lines are unnecessary i think
-    #sudo('mkdir -p {0}/../RASVAMT'.format(env.APP_DIR_ABS))
-    #sudo('chown {0}:{1} {2}/../RASVAMT'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
+    #sudo('mkdir -p {0}/../YMAC_Return'.format(env.APP_DIR_ABS))
+    #sudo('chown {0}:{1} {2}/../YMAC_Return'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
     sudo('usermod -a -G {} ec2-user'.format(GROUP))
     print "\n\n******** USER SETUP COMPLETED!********\n\n"
 
@@ -902,8 +930,8 @@ def test_env():
 
     env.key_filename = AWS_KEY
     env.roledefs = {
-        'rasvamtmgr' : host_names,
-        'rasvamt' : host_names,
+        'YMAC_Returnmgr' : host_names,
+        'YMAC_Return' : host_names,
     }
     puts(green("\n******** EC2 INSTANCE SETUP COMPLETE!********\n"))
 
@@ -913,7 +941,7 @@ def local_deploy():
     """
     Deploy to local system
     """
-    local('../RASVAMT.sh -l')
+    local('../YMAC_Return.sh -l')
 
 
 @task
@@ -938,15 +966,15 @@ def init_deploy():
     Install the init script for an operational deployment
     Requires user with sudo access 
     """
-    #TODO:Sort out ec2-user into rasvamt group ? 
+    #TODO:Sort out ec2-user into YMAC_Return group ? 
     if not env.has_key('APP_DIR_ABS') or not env.APP_DIR_ABS:
-        env.APP_DIR_ABS = '{0}/{1}/'.format('/home/rasvamt', APP_DIR)
+        env.APP_DIR_ABS = '{0}/{1}/'.format('/home/YMAC_Return', APP_DIR)
     
     #check if git repo exists pull else clone
     print(red("Initialising deployment"))
     set_env()
     with settings(user=env.USERS[0]):
-        if check_dir(env.APP_DIR_ABS+'/RASVAMT'):
+        if check_dir(env.APP_DIR_ABS+'/YMAC_Return'):
             git_pull()
         else:
             git_clone()
@@ -954,13 +982,13 @@ def init_deploy():
     sudo('mkdir -p /etc/supervisor/conf.d/')
         
     #Having trouble with 
-    with cd(env.APP_DIR_ABS+'/RASVAMT/src/'):
+    with cd(env.APP_DIR_ABS+'/YMAC_Return/src/'):
         sudo('cp nginx.conf /etc/nginx/')
         sudo('cp rasvama.conf /etc/supervisor/conf.d/')
         sudo('chmod +x gunicorn_start')
 
     with settings(user=env.USERS[0]):
-        virtualenv('cd RASVAMT/src; python {0}/create_db.py'.\
+        virtualenv('cd YMAC_Return/src; python {0}/create_db.py'.\
                format('../db'))
 
     #check if nginx is running else
@@ -978,8 +1006,8 @@ def deploy():
     print(red("Beginning Deploy:"))
     #might need setenv 
     #create_db()
-    #sudo(virtualenv('supervisorctl restart RASVAMT'))
-    with cd(env.APP_DIR_ABS+'/RASVAMT/src'):
+    #sudo(virtualenv('supervisorctl restart YMAC_Return'))
+    with cd(env.APP_DIR_ABS+'/YMAC_Return/src'):
         sudo('./gunicorn_start')
 
 
@@ -994,11 +1022,11 @@ def update_deploy():
     TODO: maybe use zc.buildout
     """
     set_env()
-    #sudo(virtualenv('supervisorctl restart RASVAMT'))
+    #sudo(virtualenv('supervisorctl restart YMAC_Return'))
     git_pull()
 
 
-    with cd(env.APP_DIR_ABS+'/RASVAMT/src'):
+    with cd(env.APP_DIR_ABS+'/YMAC_Return/src'):
         sudo('cp nginx.conf /etc/nginx/')
         sudo('cp rasvama.conf /etc/supervisor/conf.d/')
         try:
@@ -1044,7 +1072,7 @@ def operations_deploy():
 @task
 def install(standalone=0):
     """
-    Install RASVAMT users and RASVAMT software on existing machine.
+    Install YMAC_Return users and YMAC_Return software on existing machine.
     Note: Requires root permissions!
     """
     set_env()
@@ -1080,7 +1108,7 @@ def user_fix():
 @task
 def uninstall():
     """
-    Uninstall RASVAMT, RASVAMT users and init script.
+    Uninstall YMAC_Return, YMAC_Return users and init script.
     
     NOTE: This can only be used with a sudo user.
     """
@@ -1146,7 +1174,7 @@ def test_front_end():
     """
     Runs automated front end testing server must available
     """
-    #local('../RASVAMT.sh -l')
+    #local('../YMAC_Return.sh -l')
     local('python ../testing/automated_front.py')
 
 @task(alias='test')
