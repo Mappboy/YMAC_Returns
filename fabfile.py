@@ -51,6 +51,8 @@ from fabric.utils import puts, abort, fastprint
 from fabric.colors import *
 from fabric.exceptions import NetworkError
 
+from Crypto.PublicKey import RSA
+
 try:
     import urllib2
 except:
@@ -95,14 +97,17 @@ ADMIN_POLICIES = [
  					'AmazonRoute53DomainsFullAccess',
  					'AdministratorAccess',
 					'AmazonGlacierFullAccess',
-					'IAMFullAccess'
+					'IAMFullAccess',
+					'ResourceGroupsandTagEditorFullAccess'
 					]
 BASIC_POLICIES = [
 					'AmazonGlacierReadOnlyAccess',
 					'AmazonRDSReadOnlyAccess',
  					'AmazonEC2ReadOnlyAccess',
 					'AmazonS3ReadOnlyAccess',
-				]
+					'ResourceGroupsandTagEditorReadOnlyAccess'
+					]
+
 ADMINGROUP = SECURITY_GROUPS[0]
 
 ####
@@ -264,17 +269,6 @@ def create_aws_user_groups():
 
 
 @task
-def connect():
-    puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
-    if not env.has_key('AWS_PROFILE') or not env.AWS_PROFILE:
-        env.AWS_PROFILE = AWS_PROFILE
-    if not env.has_key('key_filename') or not env.key_filename:
-        env.key_filename = AWS_KEY
-
-    conn = boto.ec2.connect_to_region(AWS_REGION, profile_name=env.AWS_PROFILE)
-    return conn
-
-@task
 def aws_create_key_pair():
     """
     Create the AWS_KEY if it does not exist already and copies it into ~/.ssh
@@ -282,55 +276,86 @@ def aws_create_key_pair():
     puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
     if not env.has_key('AWS_PROFILE') or not env.AWS_PROFILE:
         env.AWS_PROFILE = AWS_PROFILE
-    conn = boto.ec2.connect_to_region(AWS_REGION, profile_name=env.AWS_PROFILE)
-    kp = conn.get_key_pair(KEY_NAME)
-    if not kp: # key does not exist on AWS
-        kp = conn.create_key_pair(KEY_NAME)
+    client = boto3.client('ec2')
+    respone = False
+    try:
+    	response = client.describe_key_pairs(KeyNames=[KEY_NAME])
+    	puts(green('***** KEY_PAIR exists! *******'))
+    except: #key does not exist on AWS
+        kp = client.create_key_pair(KeyName=KEY_NAME)
         puts(green("\n******** KEY_PAIR created!********\n"))
         if os.path.exists(os.path.expanduser(AWS_KEY)):
             os.unlink(AWS_KEY)
-        kp.save('~/.ssh/')
-        Rkey = RSA.importKey(kp.material)
+        with open(os.path.expanduser(AWS_KEY),'w') as key_file:
+        	key_file.write(kp['KeyMaterial'])
+        Rkey = RSA.importKey(kp['KeyMaterial'])
         env.SSH_PUBLIC_KEY = Rkey.exportKey('OpenSSH')
         puts(green("\n******** KEY_PAIR written!********\n"))
-    else:
-        puts(green('***** KEY_PAIR exists! *******'))
 
     if not os.path.exists(os.path.expanduser(AWS_KEY)): # don't have the private key
-        if not kp:
-            kp = conn.get_key_pair(KEY_NAME)
+        if not response:
+            response = client.describe_key_pairs(KeyNames=[KEY_NAME])
         puts(green("\n******** KEY_PAIR retrieved********\n"))
-        Rkey = RSA.importKey(kp.material)
+        Rkey = RSA.importKey(response['KeyMaterial'])
         env.SSH_PUBLIC_KEY = Rkey.exportKey('OpenSSH')
-        kp.save('~/.ssh/')
+        with open(os.path.expanduser(AWS_KEY),'w') as key_file:
+        	key_file.write(kp['KeyMaterial'])
+        Rkey = RSA.importKey(kp['KeyMaterial'])
         puts(green("\n******** KEY_PAIR written!********\n"))
     puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
-    conn.close()
-    return
 
 
+@task
 def check_create_aws_sec_group():
     """
     Check whether default security group exists
     """
     puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
-    conn = connect()
-    sec = conn.get_all_security_groups()
-    conn.close()
-    if map(lambda x:x.name.upper(), sec).count(AWS_SEC_GROUP):
+    client = boto3.client('ec2')
+    ec2 = boto3.resource('ec2')
+    sec = client.describe_security_groups()
+    security_group = ec2.SecurityGroup('id')
+    if map(lambda x:x.upper(), [ s['GroupName'] for s in sec['SecurityGroups'] ]).count(AWS_SEC_GROUP):
         puts(green("\n******** Group {0} exists!********\n".format(AWS_SEC_GROUP)))
-        return True
+        response = filter(lambda x: x['GroupName'] == AWS_SEC_GROUP, sec['SecurityGroups'])[0]
     else:
-        ngassg = conn.create_security_group(AWS_SEC_GROUP, 'NGAS default permissions')
-        ngassg.authorize('tcp', 22, 22, '0.0.0.0/0')
-        ngassg.authorize('tcp', 80, 80, '0.0.0.0/0')
-        ngassg.authorize('tcp', 5678, 5678, '0.0.0.0/0')
-        ngassg.authorize('tcp', 7777, 7777, '0.0.0.0/0')
-        ngassg.authorize('tcp', 8888, 8888, '0.0.0.0/0')
-        return False
+        response = client.create_security_group(GroupName=AWS_SEC_GROUP,
+        										Description='YMACRETURN default permissions')
+    ymrsg = ec2.SecurityGroup(response['GroupId'])
+    #SSH
+    ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=22, ToPort=22, CidrIp='0.0.0.0/0')
+    #HTTP
+    ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=80, ToPort=80, CidrIp='0.0.0.0/0')
+    ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=443, ToPort=443, CidrIp='0.0.0.0/0')
+    #MySQL 
+            #NOTE NOT SURE ABOUT THE FOLLOWING
+    #ymrsg.authorize('tcp', 5678, 5678, '0.0.0.0/0')
+    #ymrsg.authorize('tcp', 3306, 3306, '0.0.0.0/0')
+    #ymrsg.authorize('tcp', 7777, 7777, '0.0.0.0/0')
+    #ymrsg.authorize('tcp', 8888, 8888, '0.0.0.0/0')
     puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
+
+
+@task
+def delete_key_pair():
+	"""
+	delete our key key_pair
+	"""
+	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
+	try:
+		client = boto3.client('ec2')
+		response = client.delete_key_pair(KeyName=KEY_NAME)
+		if response['ResponseMetadata']['HTTPStatusCode'] == 200:
+			puts(green("Deleted {}".format(KEY_NAME)))
+		else:
+			puts(red("Something bad happened {}".format(response)))
+	except:
+		puts(red("Something bad happened, Key probably doesn't exist"))
+	puts(green("\n******** Task {0} finished!********\n".\
+        format(inspect.stack()[0][3])))
+
 
 @task
 def whatsmyip():
