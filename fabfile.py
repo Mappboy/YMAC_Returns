@@ -80,11 +80,17 @@ KEY_NAME = 'ymac_return'
 AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
 AWS_SEC_GROUP = 'YMACRETURN' # Security group allows SSH and other ports
 
-AMI_NAME = 'New'
+AMI_NAME = 'Ubuntu'
 AMI_ID = AMI_IDs[AMI_NAME]
 INSTANCE_NAME = 'YMAC_RETURN_YINHAWANGA'
 INSTANCE_TYPE = 't1.micro'
 INSTANCES_FILE = os.path.expanduser('~/.aws/aws_instances')
+RDS_PACKAGE = "MySQL"
+RDS_TYPE = "db." + INSTANCE_TYPE
+RDS_STORAGE = 5
+RDS_MAINTAINENCE = "Sun:01:00-Sun:02:00"
+RDS_BACKUP_DAYS = 7
+RDS_BACKUP_TIME = "02:15-03:15"
 
 #### This should be replaced by another key and security group
 AWS_KEY = os.path.expanduser('~/.ssh/ymac_main.pem')
@@ -100,6 +106,7 @@ ADMIN_POLICIES = [
 					'IAMFullAccess',
 					'ResourceGroupsandTagEditorFullAccess'
 					]
+
 BASIC_POLICIES = [
 					'AmazonGlacierReadOnlyAccess',
 					'AmazonRDSReadOnlyAccess',
@@ -132,6 +139,7 @@ HOSTS_FILE = 'logs/hosts_file'
 ssh.util.log_to_file('logs/setup.log',10)
 
 #Check Boto 
+# TODO I believe Boto config actually just checks you ~/.aws/cofig file
 BOTO_CONFIG = os.path.expanduser('~/.boto')
 
 # TODO check all our packages required
@@ -164,22 +172,21 @@ YUM_PACKAGES = [
    'nginx',
 ]
 
+# apt-get install php5-mysql php5-curl
 APT_PACKAGES = [
         'libreadline-dev',
-        'sqlite3',
-        'libsqlite3-dev',
         'httpd24',
         'supervisor',
-        'apache2'
+        'apache2',
+        'php5-common',
+        'libapache2-mod-php5',
+        'php5-cli'
         ]
 
 
 PIP_PACKAGES = [
         'fabric',
         'boto',
-        'flask',
-        'gunicorn',
-        'pysendfile',
         'supervisor',
         ]
 
@@ -265,13 +272,14 @@ def create_aws_user_groups():
 				policy=pol_arn,
 				group=SECURITY_GROUPS[1],
 				message=ce.message)))
-	puts(green("\n***** Completed Setting up User, Groups and Policies *****\n"))
+	puts(green("\n***** Completed Setting up User, Groups,Roles and Policies *****\n"))
 
 
 @task
 def aws_create_key_pair():
     """
     Create the AWS_KEY if it does not exist already and copies it into ~/.ssh
+    This is the key that will be used to SSH into our Resoueces such as EC2, RDS, S3 
     """
     puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
     if not env.has_key('AWS_PROFILE') or not env.AWS_PROFILE:
@@ -486,12 +494,64 @@ def check_setup():
     
 
 @task
-def create_instance(names, use_elastic_ip, public_ips):
+def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype='DEV', enhanced_monitoring=False):
+	"""
+	Create our RDS Instance
+	:param name: the name to be used for this instance
+	:param tags: tag to be associated with our instance
+	:param type: DEV or PRODUCTION
+
+	NOTE: You will need to create emaccess role if you want enhanced MonitoringInterval
+			- see http://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_Monitoring.html#USER_Monitoring.OS.IAMRole
+	"""
+
+	#TODO:  Not sure about VPC Security Groups 
+	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
+	client = boto3.client('rds')
+	RDS_TAGS = [ {'Key':'Name', 'Value':tag} ]
+	if enhanced_monitoring:
+		reponse = client.create_db_instance(
+								DBName=name,
+								DBInstanceIdentifier="{}-{}".format(name,dbtype),
+								AllocatedStorage=RDS_STORAGE,
+								DBInstanceClass=RDS_TYPE,
+								Engine=RDS_PACKAGE,
+								MasterUsername=username,
+								MasterUserPassword=password,
+								PreferredMaintenanceWindow=RDS_MAINTAINENCE,
+								BackupRetentionPeriod=RDS_BACKUP_DAYS,
+								PreferredBackupWindow=RDS_BACKUP_TIME,
+								Tags=RDS_TAGS,
+								MonitoringInterval=15,
+								MonitoringRoleArn='arn:aws:iam::512935204824:role/emaccess'
+								)
+	else:
+		response = client.create_db_instance(
+								DBName=name,
+								DBInstanceIdentifier="{}-{}".format(name,dbtype),
+								AllocatedStorage=RDS_STORAGE,
+								DBInstanceClass=RDS_TYPE,
+								Engine=RDS_PACKAGE,
+								MasterUsername=username,
+								MasterUserPassword=password,
+								PreferredMaintenanceWindow=RDS_MAINTAINENCE,
+								BackupRetentionPeriod=RDS_BACKUP_DAYS,
+								PreferredBackupWindow=RDS_BACKUP_TIME,
+								Tags=RDS_TAGS)
+	puts(green("\n******** Task {0} finished!********\n".\
+        format(inspect.stack()[0][3])))
+	return response
+
+
+@task
+def create_instance(names, use_elastic_ip, public_ips, tags):
     """Create the EC2 instance
 
     :param names: the name to be used for this instance
     :type names: list of strings
     :param boolean use_elastic_ip: is this instance to use an Elastic IP address
+    :param tags: list of tags to be associated with our instance
+    :type tags: list of strings
 
     :rtype: string
     :return: The public host name of the AWS instance
@@ -502,6 +562,7 @@ def create_instance(names, use_elastic_ip, public_ips):
         abort('The lists do not match in length')
 
     # This relies on a ~/.boto file holding the '<aws access key>', '<aws secret key>'
+    client = boto3.client('ec2')
     conn = boto.ec2.connect_to_region(AWS_REGION, profile_name=env.AWS_PROFILE)
 
     if use_elastic_ip:
