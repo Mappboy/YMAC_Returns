@@ -76,14 +76,14 @@ AMI_IDs = {'Amazon':'ami-48d38c2b',
 #### This should be replaced by another key and security group
 AWS_REGION = 'ap-southeast-2'
 AWS_PROFILE = 'YMACRETURN'
-KEY_NAME = 'ymac_return'
+KEY_NAME = 'ymac_main'
 AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
 AWS_SEC_GROUP = 'YMACRETURN' # Security group allows SSH and other ports
 
 AMI_NAME = 'Ubuntu'
 AMI_ID = AMI_IDs[AMI_NAME]
 INSTANCE_NAME = 'YMAC_RETURN_YINHAWANGA'
-INSTANCE_TYPE = 't1.micro'
+INSTANCE_TYPE = 't2.micro'
 INSTANCES_FILE = os.path.expanduser('~/.aws/aws_instances')
 RDS_PACKAGE = "MySQL"
 RDS_TYPE = "db." + INSTANCE_TYPE
@@ -93,8 +93,6 @@ RDS_BACKUP_DAYS = 7
 RDS_BACKUP_TIME = "02:15-03:15"
 
 #### This should be replaced by another key and security group
-AWS_KEY = os.path.expanduser('~/.ssh/ymac_main.pem')
-KEY_NAME = 'ymac_main'
 SECURITY_GROUPS = ['YMAC_ROOT', 'YMAC_return_basic']
 ADMIN_POLICIES = [ 
 					'AmazonRDSFullAccess',
@@ -310,6 +308,7 @@ def aws_create_key_pair():
         	key_file.write(kp['KeyMaterial'])
         Rkey = RSA.importKey(kp['KeyMaterial'])
         puts(green("\n******** KEY_PAIR written!********\n"))
+    local('chmod 400 {}'.format(os.path.expanduser(AWS_KEY)))
     puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
 
@@ -376,7 +375,9 @@ def whatsmyip():
     puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
     whatismyip = 'http://bot.whatismyipaddress.com/'
     try:
-        myip = urllib.urlopen(whatismyip).readlines()[0]
+        myip = urllib2.urlopen(whatismyip).readlines()[0]
+    except NameError:
+    	myip = urllib.urlopen(whatismyip).readlines()[0]
     except:
         puts(red('Unable to derive IP through {0}'.format(whatismyip)))
         myip = '127.0.0.1'
@@ -544,8 +545,11 @@ def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype=
 
 
 @task
-def create_instance(names, use_elastic_ip, public_ips, tags):
-    """Create the EC2 instance
+def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
+    """Create the EC2 instance. Pass names, public ips as pipe-del strings
+    i.e names='myname1|myname2'
+    Pass tags as comma and colon delim string
+    i.e tags='key,value:name,dev:resource,ec2:claim-group,yinhawankga'
 
     :param names: the name to be used for this instance
     :type names: list of strings
@@ -555,26 +559,36 @@ def create_instance(names, use_elastic_ip, public_ips, tags):
 
     :rtype: string
     :return: The public host name of the AWS instance
+    TODO: Lists must be split accordingly 
     """
-    puts('Creating instances {0} [{1}:{2}]'.format(names, use_elastic_ip, public_ips))
-    number_instances = len(names)
-    if number_instances != len(public_ips):
+    puts('Creating instances {0} {1} [{2}:{3}]'.format(names, tags, use_elastic_ip, public_ips))
+    number_instances = len(names.split("|"))
+    names = names.split("|")
+    if number_instances > 1 and number_instances != len(public_ips):
         abort('The lists do not match in length')
 
     # This relies on a ~/.boto file holding the '<aws access key>', '<aws secret key>'
     client = boto3.client('ec2')
-    conn = boto.ec2.connect_to_region(AWS_REGION, profile_name=env.AWS_PROFILE)
+    ec2 = boto3.resource('ec2')
 
     if use_elastic_ip:
         # Disassociate the public IP
+        public_ips = public_ips.split("|")
         for public_ip in public_ips:
-            if not conn.disassociate_address(public_ip=public_ip):
+            if not client.disassociate_address(PublicIp=public_ip):
                 abort('Could not disassociate the IP {0}'.format(public_ip))
 
-    reservations = conn.run_instances(AMI_IDs[env.AMI_NAME], instance_type=INSTANCE_TYPE, \
-                                    key_name=KEY_NAME, security_groups=[AWS_SEC_GROUP],\
-                                    min_count=number_instances, max_count=number_instances)
-    instances = reservations.instances
+
+    reservations = client.run_instances(
+    									ImageId=AMI_IDs[AMI_NAME], 
+    									InstanceType=INSTANCE_TYPE,
+                                    	KeyName=KEY_NAME, 
+                                    	SecurityGroups=[AWS_SEC_GROUP],
+                                    	MinCount=number_instances, 
+                                    	MaxCount=number_instances,
+                                 		)
+
+    instances = reservations['Instances']
     # Sleep so Amazon recognizes the new instance
     for i in range(4):
         fastprint('.')
@@ -583,51 +597,59 @@ def create_instance(names, use_elastic_ip, public_ips, tags):
     # Are we running yet?
     iid = []
     for i in range(number_instances):
-        iid.append(instances[i].id)
+        iid.append(instances[i]['InstanceId'])
 
-    stat = conn.get_all_instance_status(iid)
-    running = [x.state_name=='running' for x in stat]
+    stat = [ ec2.Instance(i) for i in iid ]
+    running = [x.state['Name'] =='running' for x in stat]
     puts('\nWaiting for instances to be fully available:\n')
-    while sum(running) != number_instances:
+    while not all(running):
         fastprint('.')
         time.sleep(5)
-        stat = conn.get_all_instance_status(iid)
-        running = [x.state_name=='running' for x in stat]
+        for instance in stat:
+        	instance.reload()
+        running = [x.state['Name'] =='running' for x in stat]
     puts('.') #enforce the line-end
 
     # Local user and host
     userAThost = os.environ['USER'] + '@' + whatsmyip()
 
+    #Create tag list of dicts
+    ec2_tags = [ dict(zip(['Key','Value'],tag.split(":"))) for tag in [ tstr for tstr in tags.split("|")] ]
     # Tag the instance
-    for i in range(number_instances):
-        conn.create_tags([instances[i].id], {'Name': names[i],
-                                             'Created By':userAThost,
-                                             })
+    ec2_tags.append({'Key': 'Created By','Value':userAThost})
+    for i, instance in enumerate(stat):
+    	ec2_tags.append({'Key': 'Name', 'Value': names[i]} )
+        instance.create_tags(Tags=ec2_tags)
+        ec2_tags.pop()
 
 
     # Associate the IP if needed
     if use_elastic_ip:
-        for i in range(number_instances):
-            puts('Current DNS name is {0}. About to associate the Elastic IP'.format(instances[i].dns_name))
-            if not conn.associate_address(instance_id=instances[i].id, public_ip=public_ips[i]):
-                abort('Could not associate the IP {0} to the instance {1}'.format(public_ips[i], instances[i].id))
+        for i, instance in enumerate(stat):
+            puts('Current DNS name is {0}. About to associate the Elastic IP'.format(instance.private_dns_name))
+            if not instance.associate_address(InstanceId=instance.instance.id, PublicIp=public_ips[i]):
+                abort('Could not associate the IP {0} to the instance {1}'.format(public_ips[i], instance.instance_id))
 
     # Load the new instance data as the dns_name may have changed
     host_names = []
-    for i in range(number_instances):
-        instances[i].update(True)
-        puts('Current DNS name is {0} after associating the Elastic IP'.format(instances[i].dns_name))
-        puts('Instance ID is {0}'.format(instances[i].id))
+    for instance in stat:
+        instance.reload()
+        puts('Current DNS name is {0} after associating the Elastic IP'.format(instance.public_dns_name))
+        puts('Instance ID is {0}'.format(instance.instance_id))
         print blue('In order to terminate this instance you can call:')
-        print blue('fab terminate:instance_id={0}'.format(instances[i].id))
-        host_names.append(str(instances[i].dns_name))
+        print blue('fab terminate:instance_id={0}'.format(instance.id))
+        host_names.append(str(instance.public_dns_name))
+        with open( HOSTS_FILE, 'a' ) as hf:
+        	hf.write("{}\n".format(instance.public_dns_name))
 
     # The instance is started, but not useable (yet)
     puts('Started the instance(s) now waiting for the SSH daemon to start.')
     env.host_string = host_names[0]
 
-    if env.AMI_NAME in ['CentOS', 'SLES']:
+    if AMI_NAME in ['CentOS', 'SLES']:
         env.user = 'root'
+    elif AMI_NAME == 'Ubuntu':
+    	env.user = 'ubuntu'
     else:
         env.user = USERNAME
     check_ssh()
@@ -1099,6 +1121,8 @@ def test_env():
         env.user = 'root'
     # Check and create the key_pair if necessary
     aws_create_key_pair()
+    # Check user, groups and policies
+    create_aws_user_groups()
     # Check and create security group if necessary
     check_create_aws_sec_group()
     # Create the instance in AWS
