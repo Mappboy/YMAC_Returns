@@ -33,6 +33,7 @@ fab -u `whoami` -H <IP address> -f machine-setup/deploy.py user_deploy
 # 2 : Read up on elastic ip addresses
 # 3 : Read up on S3, RDS, Glacier, Route 53
 # 4 : Proper naming of groups, users etc 
+# 5 : Set up S3
 import glob, inspect
 
 import boto3
@@ -45,7 +46,7 @@ from fabric.context_managers import cd, hide, settings
 from fabric.contrib.console import confirm
 from fabric.contrib.files import append, sed, comment, exists
 from fabric.decorators import task, serial
-from fabric.operations import prompt
+from fabric.operations import prompt, put
 from fabric.network import ssh
 from fabric.utils import puts, abort, fastprint
 from fabric.colors import *
@@ -61,7 +62,8 @@ except:
 #Defaults
 thisDir = os.path.dirname(os.path.realpath(__file__))
 
-USERNAME = 'ec2-user'
+#USERNAME = 'ec2-user'
+USERNAME = 'ubuntu'
 POSTFIX = False 	 # Postfix is an SMTP mail server
 BRANCH = 'master'    # this is controlling which branch is used in git clone
 
@@ -119,16 +121,18 @@ ADMINGROUP = SECURITY_GROUPS[0]
 ELASTIC_IP = 'False'
 APP_PYTHON_VERSION = '2.7'
 APP_PYTHON_URL = 'http://www.python.org/ftp/python/2.7.6/Python-2.7.6.tar.bz2'
-USERS = ['cjpoole','onorris','jtillman','spashby','kjames']
+USERS = ['cjpoole','jtillman','kjames']
 ADMINISTRATORS = ['cjpoole','jtillman']
-GROUP = 'YMAC_Return_user'
-APP_DIR = 'YMAC_Return_portal' # runtime directory
-APP_DEF_DB = '/home/YMAC_Return/YMAC_Return_portal/YMAC_Return/YMAC_Return.db'
+DEFAULT_PASSWORD = "YamatjiReturns"
+GROUP = 'YMAC_Return'
+APACHE_ROOT = '/var/www/html'
+APP_DIR = '/mukurtucms' # runtime directory
+APP_DEF_DB = '/home/YMAC_Return/ '
 
 #User will have to change and ensure they can pull from git
 GITUSER = 'pooli3'
-GITREPO = 'github.com/Pooli3/YMAC_Returns'
-MUKURTUREPO = 'github.com/MukurtuCMS/mukurtucms'
+#GITREPO = 'github.com/Pooli3/YMAC_Returns'
+GITREPO = 'github.com/MukurtuCMS/mukurtucms'
 
 #Keep track of hosts
 HOSTS_FILE = 'logs/hosts_file'
@@ -139,9 +143,10 @@ ssh.util.log_to_file('logs/setup.log',10)
 #Check Boto 
 # TODO I believe Boto config actually just checks you ~/.aws/cofig file
 BOTO_CONFIG = os.path.expanduser('~/.boto')
+AWS_CONFIG = os.path.expanduser('~/.aws/config')
 
 # TODO check all our packages required
-#Need to insure we have Apache, Mysql, MemCached, Drush, Python, Git, Php, Supervisor
+#Need to insure we have Apache,  MemCached, Drush, Python, Git, Php, Supervisor
 # Need to include sudo a2enmod rewrite for mod_rewrite
 # To Permit changes in .htacccess
 #sudo nano /etc/apache2/sites-available/default
@@ -170,22 +175,30 @@ YUM_PACKAGES = [
    'nginx',
 ]
 
-# apt-get install php5-mysql php5-curl
+#SHOULD MAYBE BE MYSQL-CLIENT
 APT_PACKAGES = [
         'libreadline-dev',
-        'httpd24',
-        'supervisor',
-        'apache2',
+        'nginx',
         'php5-common',
         'libapache2-mod-php5',
-        'php5-cli'
+        'php5-cli',
+        'php5-memcache',
+        'memcached',
+        'php-pear',
+        'php5-mysql',
+        'php5-gd',
+        'php5-curl',
+        'libssh2-php',
+        'supervisor',
+        'python-pip',
+        'git'
         ]
 
 
 PIP_PACKAGES = [
-        'fabric',
         'boto',
         'supervisor',
+        'fabric',
         ]
 
 PUBLIC_KEYS = os.path.expanduser('~/.ssh')
@@ -223,6 +236,10 @@ def create_aws_user_groups():
 		if username not in created_users:
 			try:
 				client.create_user(UserName=username)
+				response = client.create_login_profile(
+    				UserName=username,
+    				Password=DEFAULT_PASSWORD,
+    				PasswordResetRequired=True)
 			except ClientError as ce:
 				puts( red("Problem creating {user} error is {message}".format(user=username,message=ce.message)))
 		#Create our admins
@@ -331,14 +348,18 @@ def check_create_aws_sec_group():
         										Description='YMACRETURN default permissions')
     ymrsg = ec2.SecurityGroup(response['GroupId'])
     #SSH
-    ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=22, ToPort=22, CidrIp='0.0.0.0/0')
-    #HTTP
-    ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=80, ToPort=80, CidrIp='0.0.0.0/0')
-    ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=443, ToPort=443, CidrIp='0.0.0.0/0')
-    #MySQL 
+    try:
+    	ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=22, ToPort=22, CidrIp='0.0.0.0/0')
+    	#HTTP
+    	ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=80, ToPort=80, CidrIp='0.0.0.0/0')
+    	ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=443, ToPort=443, CidrIp='0.0.0.0/0')
+    	#MySQL
+    	ymrsg.authorize(IpProtocol='tcp', FromPort=3306, ToPort=3306, CidrIp='0.0.0.0/0')
+    except:
+    	puts("security_group already exists")
             #NOTE NOT SURE ABOUT THE FOLLOWING
     #ymrsg.authorize('tcp', 5678, 5678, '0.0.0.0/0')
-    #ymrsg.authorize('tcp', 3306, 3306, '0.0.0.0/0')
+    
     #ymrsg.authorize('tcp', 7777, 7777, '0.0.0.0/0')
     #ymrsg.authorize('tcp', 8888, 8888, '0.0.0.0/0')
     puts(green("\n******** Task {0} finished!********\n".\
@@ -416,30 +437,49 @@ def check_ssh():
             tries += 1
             time.sleep(t_sleep)
 
+@task
+def get_host_names():
+	"""
+	Sets host names by creating a new instance
+	Or checking our hosts file
+	"""
+	with open(HOSTS_FILE,'r') as hf:
+		hostnames = [ line.rstrip("\n") for line in hf.readlines() ] 
+	puts(green("Found hosts {}".format(hostnames)))
+	env.hosts = hostnames
+	if not env.host_string:
+		env.host_string = env.hosts[0]
 
 @task
 def set_env():
     # set environment to default for EC2, if not specified on command line.
-
+    # THIS NEEDS FIXING SHOULD ALSO SET RDS and S3 envs 
     # puts(env)
+    get_host_names()
     if not env.has_key('GITUSER') or not env.GITUSER:
         env.GITUSER = GITUSER
     if not env.has_key('GITREPO') or not env.GITREPO:
         env.GITREPO = GITREPO
     if not env.has_key('postfix') or not env.postfix:
         env.postfix = POSTFIX
-    if not env.has_key('user') or not env.user:
+    if not env.has_key('key_filename') or not env.key_filename:
+        env.key_filename = AWS_KEY
+    if not env.has_key('User') or not env.User:
         env.user = USERNAME
     if not env.has_key('USERS') or not env.USERS:
         env.USERS = USERS
     if type(env.USERS) == type(''): # if its just a string
-        print "USERS preset to {0}".format(env.USERS)
+        puts("USERS preset to {0}".format(env.USERS))
         env.USERS = [env.USERS] # change the type
     if not env.has_key('HOME') or env.HOME[0] == '~' or not env.HOME:
         env.HOME = run("echo ~{0}".format(env.USERS[0]))
     if not env.has_key('src_dir') or not env.src_dir:
-        env.src_dir = thisDir + '/../'
-    require('hosts', provided_by=[test_env])
+        env.src_dir = thisDir
+    require('hosts', provided_by=[get_host_names, test_env])
+    if not env.has_key('hosts') or not env.hosts:
+    	env.hosts = get_host_names()
+    if not env.has_key('host_string') or not env.host_string:
+    	env.host_string = get_host_names()
     #Maybe load hosts from host file
     #if not env.has_key('host_string'):
     #open hosts file and attempt to load host from that
@@ -452,7 +492,7 @@ def set_env():
         env.APP_DIR_ABS = '{0}/{1}'.format(env.PREFIX, APP_DIR)
         env.APP_DIR = APP_DIR
     else:
-        env.APP_DIR = env.APP_DIR_ABS.split('/')[-1]
+        env.APP_DIR = APP_DIR#env.APP_DIR_ABS.split('/')[-1]
     if not env.has_key('force') or not env.force:
         env.force = 0
     if not env.has_key('ami_name') or not env.ami_name:
@@ -468,9 +508,9 @@ def set_env():
             host_string:       {3};
             postfix:           {4};
             HOME:              {8};
-            APP_DIR_ABS:      {5};
-            APP_DIR:          {6};
-            USERS:        {7};
+            APP_DIR_ABS:       {5};
+            APP_DIR:           {6};
+            USERS:        	   {7};
             PREFIX:            {9};
             SRC_DIR:           {10};
             """.\
@@ -488,8 +528,8 @@ def check_setup():
     Includes boto config/aws config 
     Security keys, possibly check permissions
     """
-    if not os.path.isfile(BOTO_CONFIG):
-    	abort('Require boto config to create instance')
+    if not os.path.isfile(BOTO_CONFIG) and not os.path.isfile(AWS_CONFIG):
+    	abort('Require boto config or aws config to create instance')
     #Check if user can import Flask
     #Check if user can import boto
     
@@ -501,6 +541,7 @@ def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype=
 	:param name: the name to be used for this instance
 	:param tags: tag to be associated with our instance
 	:param type: DEV or PRODUCTION
+	#NEED TO SET SecurityGroup = YMACRETURN
 
 	NOTE: You will need to create emaccess role if you want enhanced MonitoringInterval
 			- see http://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_Monitoring.html#USER_Monitoring.OS.IAMRole
@@ -508,6 +549,9 @@ def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype=
 
 	#TODO:  Not sure about VPC Security Groups 
 	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
+	ec2_client = boto3.client('ec2')
+	sec_groups = ec2_client.describe_security_groups(GroupNames=[AWS_SEC_GROUP])
+	group_id = sec_groups['SecurityGroups'][0]['GroupId']
 	client = boto3.client('rds')
 	RDS_TAGS = [ {'Key':'Name', 'Value':tag} ]
 	if enhanced_monitoring:
@@ -524,7 +568,8 @@ def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype=
 								PreferredBackupWindow=RDS_BACKUP_TIME,
 								Tags=RDS_TAGS,
 								MonitoringInterval=15,
-								MonitoringRoleArn='arn:aws:iam::512935204824:role/emaccess'
+								MonitoringRoleArn='arn:aws:iam::512935204824:role/emaccess',
+								VpcSecurityGroupIds=[group_id]
 								)
 	else:
 		response = client.create_db_instance(
@@ -538,7 +583,9 @@ def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype=
 								PreferredMaintenanceWindow=RDS_MAINTAINENCE,
 								BackupRetentionPeriod=RDS_BACKUP_DAYS,
 								PreferredBackupWindow=RDS_BACKUP_TIME,
+								VpcSecurityGroupIds=[group_id],
 								Tags=RDS_TAGS)
+	puts(blue(response))
 	puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
 	return response
@@ -559,7 +606,7 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
 
     :rtype: string
     :return: The public host name of the AWS instance
-    TODO: Lists must be split accordingly 
+    TODO: Test All AMIS
     """
     puts('Creating instances {0} {1} [{2}:{3}]'.format(names, tags, use_elastic_ip, public_ips))
     number_instances = len(names.split("|"))
@@ -655,6 +702,17 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
     check_ssh()
     return host_names
 
+@task
+def destroy_all_instances():
+	"""
+	Shuts down all ec2 instances
+	TODO: remove these instances from mour hosts file
+	"""
+	ec2_client = boto3.client('ec2')
+	instance_ids = [ i[0]['InstanceId'] for i in [ inst['Instances'] for inst in 
+					 ec2_client.describe_instances()['Reservations'] ] ]
+	ec2_client.terminate_instances(InstanceIds=instance_ids)
+	local('rm {}'.format(HOSTS_FILE))
 
 @task
 def get_linux_flavor():
@@ -675,7 +733,7 @@ def get_linux_flavor():
     else:
         linux_flavor = run('uname -s')
 
-    print "Remote machine running %s" % linux_flavor
+    puts(green("Remote machine running %s" % linux_flavor))
     env.linux_flavor = linux_flavor
     return linux_flavor
 
@@ -754,6 +812,7 @@ def install_yum(package):
     processCentOSErrMsg(errmsg)
 
 
+@task
 def install_apt(package):
     """
     Install a package using APT
@@ -824,12 +883,12 @@ def git_clone():
     """
     print(green("Cloning from GitHub..."))
     copy_public_keys()
-    with cd(env.APP_DIR_ABS):
+    with cd(APACHE_ROOT):
         try:
-            run('git clone https://{1}.git'.format(env.GITUSER, env.GITREPO))
+            sudo('git clone https://{1}.git'.format(env.GITUSER, env.GITREPO))
         except:
             gituser = raw_input("Enter git user name")
-            run('git clone https://{1}.git'.format(gituser,env.GITREPO))
+            sudo('git clone https://{1}.git'.format(gituser,env.GITREPO))
 
     print(green("Clone complete"))
 
@@ -839,8 +898,8 @@ def git_pull():
     Update repo
     """
     copy_public_keys()
-    with cd(env.APP_DIR_ABS+'/YMAC_Return'):
-        run('git pull')
+    with cd(APACHE_ROOT + APP_DIR ):
+        sudo('git pull')
 
 @task
 def git_clone_tar():
@@ -894,7 +953,8 @@ def system_install():
         for package in YUM_PACKAGES:
             install_yum(package)
 
-    elif (linux_flavor == 'Ubuntu'):
+    elif ('Ubuntu' in linux_flavor):
+    	sudo('apt-get update')
         for package in APT_PACKAGES:
             install_apt(package)
     else:
@@ -979,19 +1039,14 @@ def postfix_config():
 def user_setup():
     """
     setup YMAC_Return users.
-
+    sort this all
     TODO: sort out the ssh keys
-    TODO: User permissions
-    TODO: ec2-user can't access YMAC_Return_portal
-    TODO: YMAC_Return can't sudo without passwd
     """
 
     set_env()
-    if not env.user:
-        env.user = USERNAME # defaults to ec2-user
     sudo('groupadd {0}'.format(GROUP), warn_only=True)
     for user in env.USERS:
-        sudo('useradd -g {0} -m -s /bin/bash {1}'.format(GROUP, user), warn_only=True)
+        sudo('useradd -g {0},www-data -m -s /bin/bash {1}'.format(GROUP, user), warn_only=True)
         sudo('mkdir /home/{0}/.ssh'.format(user), warn_only=True)
         sudo('chmod 700 /home/{0}/.ssh'.format(user))
         sudo('chown -R {0}:{1} /home/{0}/.ssh'.format(user,GROUP))
@@ -1010,7 +1065,7 @@ def user_setup():
     #These lines are unnecessary i think
     #sudo('mkdir -p {0}/../YMAC_Return'.format(env.APP_DIR_ABS))
     #sudo('chown {0}:{1} {2}/../YMAC_Return'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
-    sudo('usermod -a -G {} ec2-user'.format(GROUP))
+    #sudo('usermod -a -G {} ec2-user'.format(GROUP))
     print "\n\n******** USER SETUP COMPLETED!********\n\n"
 
 
@@ -1040,25 +1095,6 @@ def python_setup():
     env.PYTHON = ppath
     print "\n\n******** PYTHON SETUP COMPLETED!********\n\n"
 
-
-@task
-def virtualenv_setup():
-    """
-    setup virtualenv with the detected or newly installed python
-    """
-    set_env()
-    check_python()
-    print "CHECK_DIR: {0}/src".format(check_dir(env.APP_DIR_ABS))
-    if check_dir(env.APP_DIR_ABS+'/src'):
-        abort('{0}/src directory exists already'.format(env.APP_DIR_ABS))
-
-    with cd('/tmp'):
-        run('wget https://pypi.python.org/packages/source/v/virtualenv/virtualenv-1.11.tar.gz')
-        run('tar -xzf virtualenv-1.11.tar.gz')
-        with settings(user=env.USERS[0]):
-            run('cd virtualenv-1.11; {0} virtualenv.py {1}'.format(env.PYTHON, env.APP_DIR_ABS))
-    print "\n\n******** VIRTUALENV SETUP COMPLETED!********\n\n"
-
 @task
 def package_install(all=True,package=''):
     """
@@ -1066,9 +1102,9 @@ def package_install(all=True,package=''):
     """
     if all:
         for p in PIP_PACKAGES:
-            virtualenv('pip install {}'.format(p))
+            sudo('pip install {}'.format(p))
     else:
-        virtualenv('pip install {}'.format(package))
+        sudo('pip install {}'.format(package))
 
 @task
 def new_package(package):
@@ -1084,6 +1120,8 @@ def test_env():
     Ask a series of questions before deploying to the cloud.
 
     Allow the user to select if a Elastic IP address is to be used
+
+    TODO: Need to sort out instance names and tags
     """
     puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
     if not env.has_key('AWS_PROFILE') or not env.AWS_PROFILE:
@@ -1099,8 +1137,8 @@ def test_env():
     if not env.has_key('AMI_NAME') or not env.AMI_NAME:
         env.AMI_NAME = AMI_NAME
     env.instance_name = INSTANCE_NAME.format(env.BRANCH)
-    if not env.has_key('user') or not env.user:
-        env.user = USERNAME
+    if not env.has_key('User') or not env.User:
+        env.User = USERNAME
     env.use_elastic_ip = ELASTIC_IP
     if 'use_elastic_ip' in env:
         use_elastic_ip = to_boolean(env.use_elastic_ip)
@@ -1119,6 +1157,10 @@ def test_env():
 
     if env.AMI_NAME in ['CentOS', 'SLES']:
         env.user = 'root'
+    elif 'Ubuntu' in env.AMI_NAME:
+    	env.user = 'ubuntu'
+    else:
+    	env.user = 'ec2-user'
     # Check and create the key_pair if necessary
     aws_create_key_pair()
     # Check user, groups and policies
@@ -1126,7 +1168,10 @@ def test_env():
     # Check and create security group if necessary
     check_create_aws_sec_group()
     # Create the instance in AWS
-    host_names = create_instance([env.instance_name], use_elastic_ip, [public_ip])
+    tags = 'instance:dev'
+    host_names = create_instance(env.instance_name, tags , use_elastic_ip, [public_ip])
+    #TODO: test for rds first
+    #rds = create_rds('dev','rds')
     env.hosts = host_names
     if not env.host_string:
         env.host_string = env.hosts[0]
@@ -1159,43 +1204,90 @@ def user_deploy():
         python_setup()
     else:
         env.PYTHON = ppath
-    virtualenv_setup()
     package_install()
 
+
+@task
+def quick_job():
+    if not env.has_key('APP_DIR_ABS') or not env.APP_DIR_ABS:
+        env.APP_DIR_ABS = '{0}/{1}/{2}/{3}'.format('/home',USERS[0],'YMAC_Return_portal', APP_DIR)
+    
+    #check if git repo exists pull else clone
+    print(red("Initialising deployment"))
+    set_env()
+    with settings(user='ubuntu'):
+        puts("attempting git_clone")
+        git_clone()
+
+@task
+def write_apache_config():
+	"""
+	Writes our config file for apache2
+	"""
+	conf_file = """<VirtualHost *:80>
+    ServerName  example.com
+    ServerAdmin webmaster@example.com
+    DocumentRoot /var/www/html/mukurtucms
+
+    <Directory /var/www/html/mukurtucms>
+   		AllowOverride All
+   	</Directory>
+</VirtualHost>
+"""
+	with open("default.conf", "w") as apache_conf:
+		apache_conf.write(conf_file)
+
+	put("default.conf","/etc/apache2/sites-enabled/", use_sudo=True)
 
 @task
 def init_deploy():
     """
     Install the init script for an operational deployment
-    Requires user with sudo access 
+    Requires user with sudo access
+    mukurtucms should be put into /var/www/html I think 
+    then tell user to visit
+
+    http://ec2-52-62-205-115.ap-southeast-2.compute.amazonaws.com/mukurtucms/install.php?profile=mukurtu
     """
-    #TODO:Sort out ec2-user into YMAC_Return group ? 
-    if not env.has_key('APP_DIR_ABS') or not env.APP_DIR_ABS:
-        env.APP_DIR_ABS = '{0}/{1}/'.format('/home/YMAC_Return', APP_DIR)
-    
     #check if git repo exists pull else clone
     print(red("Initialising deployment"))
     set_env()
-    with settings(user=env.USERS[0]):
-        if check_dir(env.APP_DIR_ABS+'/YMAC_Return'):
+    with settings(user='ubuntu'):
+        #if check_dir(env.APP_DIR_ABS):
+        if check_dir(APACHE_ROOT + APP_DIR):
+            puts("attempting git pull")
             git_pull()
         else:
-            git_clone()
-    sudo('mkdir -p /etc/supervisor/')
-    sudo('mkdir -p /etc/supervisor/conf.d/')
+        	puts("attempting git_clone")
+        	git_clone()
+    puts(green("Fixing mysql"))
+    write_apache_config()
+    sudo('sudo a2enmod rewrite')
+    sudo("sed 's/bind-address/#bind-address/' /etc/mysql/my.cnf > /etc/mysql/my.cnf.new")
+    sudo('mv /etc/mysql/my.cnf /etc/mysql/my.cnf.old')
+    sudo('mv /etc/mysql/my.cnf.new /etc/mysql/my.cnf')
+    sudo('sudo chown -R :www-data /var/www/html/*')
+    sudo('cp /etc/php5/apache2/php.ini /etc/php5/apache2/php.ini.orig')
+    sudo("sed 's/expose_php = Off/expose_php = Off/' /etc/php5/apache2/php.ini \
+    	| sed 's/allow_url_fopen = On/allow_url_fopen = Off/' >  /etc/php5/apache2/php.ini")
+    sudo("mv /etc/apache2/sites-enabled/default.conf /etc/apache2/sites-enabled/000-default.conf")
+    with cd(APACHE_ROOT + APP_DIR):
+	    sites_dir = 'sites/default/files'
+	    if check_dir(sites_dir):
+	    	sudo('chmod a+w sites/default/files')
+	    else:
+	    	sudo("mkdir {}".format(sites_dir))
+	    	sudo('chmod a+w sites/default/files')
+	    sudo('cp sites/default/default.settings.php sites/default/settings.php')
+	    sudo('chmod 664 sites/default/settings.php')
+	    sudo('chmod a+w sites/default/')
+
+    sudo('service apache2 restart')
+    sudo('service mysql restart')
+    #sudo('mkdir -p /etc/supervisor/')
+    #sudo('mkdir -p /etc/supervisor/conf.d/')
         
-    #Having trouble with 
-    with cd(env.APP_DIR_ABS+'/YMAC_Return/src/'):
-        sudo('cp nginx.conf /etc/nginx/')
-        sudo('cp rasvama.conf /etc/supervisor/conf.d/')
-        sudo('chmod +x gunicorn_start')
-
-    with settings(user=env.USERS[0]):
-        virtualenv('cd YMAC_Return/src; python {0}/create_db.py'.\
-               format('../db'))
-
     #check if nginx is running else
-    sudo('service nginx start')
     print(red("Server setup and ready to deploy"))
     #Think we have 
 
@@ -1210,8 +1302,6 @@ def deploy():
     #might need setenv 
     #create_db()
     #sudo(virtualenv('supervisorctl restart YMAC_Return'))
-    with cd(env.APP_DIR_ABS+'/YMAC_Return/src'):
-        sudo('./gunicorn_start')
 
 
     print(blue("Deploy finished check server {}".format(env.host_string)))
@@ -1264,12 +1354,11 @@ def operations_deploy():
     if env.postfix:
         postfix_config()
     user_setup()
-    with settings(user=USERS[0]):
+    with settings(user='ubuntu'):
         ppath = check_python()
         if not ppath:
             python_setup()
-        virtualenv_setup()
-        package_install()
+        #package_install()
     init_deploy()
 
 @task
@@ -1292,10 +1381,9 @@ def install(standalone=0):
     #Removing this for the moment so we can use ec2-user to deploy with root permissions
         sudo('chown -R {0}:{1} {2}'.format(env.USERS[0], GROUP, env.PREFIX))
     print(green("Setting up virtual env"))
-    with settings(user=env.USERS[0]):
-        virtualenv_setup()
-        print(green("Installing python packages"))
-        package_install()
+    #with settings(user=env.USERS[0]):
+        #print(green("Installing python packages"))
+        #package_install()
         # more installation goes here
     print(red("\n\n******** INSTALLATION COMPLETED!********\n\n"))
 
@@ -1329,7 +1417,6 @@ def test_deploy():
     """
     ** MAIN TASK **: Deploy the full application EC2 test environment.
     """
-    test_flask_app()
     test_env()
     # set environment to default for EC2, if not specified otherwise.
     set_env()
@@ -1338,8 +1425,8 @@ def test_deploy():
         postfix_config()
     install()
     init_deploy()
-    user_fix()
-    deploy()
+    #user_fix()
+    #deploy()
 
 
 @task
@@ -1353,42 +1440,6 @@ def test_server():
     except:
         response = urllib.urlopen(env.host)
     assert response.code == 200
-
-@task
-def test_db():
-    """
-    Tests if database is working
-    """
-    pass
-
-@task
-def test_flask_app():
-    """
-    Runs flask tests
-    """
-    print(green("Testing flask application"))
-    with settings(warn_only=True):
-        result = local('python flask_test.py',capture=True)
-        if result.failed and not confirm("Tests failed. Continue anyway?"):
-            abort("Aborting at user request")
-    
-@task
-def test_front_end():
-    """
-    Runs automated front end testing server must available
-    """
-    #local('../YMAC_Return.sh -l')
-    local('python ../testing/automated_front.py')
-
-@task(alias='test')
-def test_all():
-    """
-    Run all tests for given host
-    """
-    check_setup()
-    test_db()
-    test_flask_app()
-    test_front_end()
 
 @task
 def uninstall_user():
@@ -1417,4 +1468,6 @@ def assign_ddns():
     sudo('sudo noip2 -C')
     sudo('chkconfig noip on')
     sudo('service noip start')
+
+
 
