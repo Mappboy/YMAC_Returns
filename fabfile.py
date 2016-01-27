@@ -27,6 +27,7 @@ fab --set postfix=False -f machine-setup/deploy.py test_deploy
 For a local installation under a normal user without sudo access
 
 fab -u `whoami` -H <IP address> -f machine-setup/deploy.py user_deploy
+
 """
 #TODO:
 # 1 : Major task at the moment is migratation from boto to boto3
@@ -40,6 +41,7 @@ import boto3
 from botocore.exceptions import ClientError
 import os
 import time
+import configobj
 
 from fabric.api import run, sudo, put, env, require, local, task
 from fabric.context_managers import cd, hide, settings
@@ -75,12 +77,27 @@ AMI_IDs = {'Amazon':'ami-48d38c2b',
                 'CentOS':'ami-5d254067',
                 'SLES':'ami-0f510a6c'}
 
+
+
+####
+ELASTIC_IP = 'False'
+APP_PYTHON_VERSION = '2.7'
+APP_PYTHON_URL = 'http://www.python.org/ftp/python/2.7.6/Python-2.7.6.tar.bz2'
+USERS = ['cjpoole','jtillman','kjames']
+ADMINISTRATORS = ['cjpoole','jtillman']
+DEFAULT_PASSWORD = "YamatjiReturns"
+GROUP = 'YMAC_Return'
+APACHE_ROOT = '/var/www/html'
+APP_DIR = '/mukurtucms' # runtime directory
+APP_DEF_DB = '/home/YMAC_Return/ '
+
 #### This should be replaced by another key and security group
 AWS_REGION = 'ap-southeast-2'
 AWS_PROFILE = 'YMACRETURN'
 KEY_NAME = 'ymac_main'
 AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
 AWS_SEC_GROUP = 'YMACRETURN' # Security group allows SSH and other ports
+
 
 AMI_NAME = 'Ubuntu'
 AMI_ID = AMI_IDs[AMI_NAME]
@@ -93,6 +110,10 @@ RDS_STORAGE = 5
 RDS_MAINTAINENCE = "Sun:01:00-Sun:02:00"
 RDS_BACKUP_DAYS = 7
 RDS_BACKUP_TIME = "02:15-03:15"
+RDS_DATABASE_NAME = 'ymacrom'
+RDS_HOST = "dev-dev.cgacg8wyoavj.ap-southeast-2.rds.amazonaws.com"
+RDS_PORT = '3306'
+RDS_USER = USERS[0]
 
 #### This should be replaced by another key and security group
 SECURITY_GROUPS = ['YMAC_ROOT', 'YMAC_return_basic']
@@ -117,17 +138,7 @@ BASIC_POLICIES = [
 
 ADMINGROUP = SECURITY_GROUPS[0]
 
-####
-ELASTIC_IP = 'False'
-APP_PYTHON_VERSION = '2.7'
-APP_PYTHON_URL = 'http://www.python.org/ftp/python/2.7.6/Python-2.7.6.tar.bz2'
-USERS = ['cjpoole','jtillman','kjames']
-ADMINISTRATORS = ['cjpoole','jtillman']
-DEFAULT_PASSWORD = "YamatjiReturns"
-GROUP = 'YMAC_Return'
-APACHE_ROOT = '/var/www/html'
-APP_DIR = '/mukurtucms' # runtime directory
-APP_DEF_DB = '/home/YMAC_Return/ '
+
 
 #User will have to change and ensure they can pull from git
 GITUSER = 'pooli3'
@@ -136,6 +147,7 @@ GITREPO = 'github.com/MukurtuCMS/mukurtucms'
 
 #Keep track of hosts
 HOSTS_FILE = 'logs/hosts_file'
+DB_FILE = 'logs/rds_file'
 
 #Keep log of process
 ssh.util.log_to_file('logs/setup.log',10)
@@ -160,25 +172,11 @@ AWS_CONFIG = os.path.expanduser('~/.aws/config')
  #</Directory>
 #After you save and exit that file, restart apache. .htacess files will now be available for all of your sites.
 #sudo service apache2 restart
-
-
-YUM_PACKAGES = [
-   'autoconf',
-   'python27-devel',
-   'git',
-   'readline-devel',
-   'sqlite-devel',
-   'make',
-   'wget.x86_64',
-   'gcc',
-   'patch',
-   'nginx',
-]
+YUM_PACKAGES = [] 
 
 #SHOULD MAYBE BE MYSQL-CLIENT
 APT_PACKAGES = [
         'libreadline-dev',
-        'nginx',
         'php5-common',
         'libapache2-mod-php5',
         'php5-cli',
@@ -189,8 +187,8 @@ APT_PACKAGES = [
         'php5-gd',
         'php5-curl',
         'libssh2-php',
-        'supervisor',
         'python-pip',
+        'mysql-client',
         'git'
         ]
 
@@ -205,6 +203,18 @@ PUBLIC_KEYS = os.path.expanduser('~/.ssh')
 # WEB_HOST = 0
 # UPLOAD_HOST = 1
 # DOWNLOAD_HOST = 2
+
+@task
+def write_to_config():
+	config = ConfigObj()
+    config['Server'] = { 'APT_PACKAGES' : APT_PACKAGES, 'PIP_PACKAGES' : PIP_PACKAGES
+    config['Logs'] = {}
+    config['AWS'] = {'key': 'value', 'key2': ['val1', 'val2']}
+    config['Mukurtu Setup'] = {'key': 'value', 'key2': ['val1', 'val2']}
+    config.filename = "mukurtucms.config"
+    config.write()
+	pass
+
 
 @task
 def create_aws_user_groups():
@@ -451,6 +461,19 @@ def get_host_names():
 		env.host_string = env.hosts[0]
 
 @task
+def get_db():
+	if os.path.isdir(DB_FILE):
+		with open(DB_FILE,'r') as db_file:
+			for line in db_file.xreadlines():
+				line = line.rstrip("\n")
+				db, port = line.split(":")
+	else:
+		client = boto3.client('rds')
+		rds = client.describe_db_instances()
+		db, port = '{DBInstances[0][Endpoint][Address]}:{DBInstances[0][Endpoint][Port]}\n'.format(**rds).split(":")
+	return (db, port)
+
+@task
 def set_env():
     # set environment to default for EC2, if not specified on command line.
     # THIS NEEDS FIXING SHOULD ALSO SET RDS and S3 envs 
@@ -464,6 +487,8 @@ def set_env():
         env.postfix = POSTFIX
     if not env.has_key('key_filename') or not env.key_filename:
         env.key_filename = AWS_KEY
+    if not env.has_key('db_host') or not env.db_host:
+        env.db_host, env.db_port = get_db()
     if not env.has_key('User') or not env.User:
         env.user = USERNAME
     if not env.has_key('USERS') or not env.USERS:
@@ -512,12 +537,13 @@ def set_env():
             APP_DIR:           {6};
             USERS:        	   {7};
             PREFIX:            {9};
-            SRC_DIR:           {10};
+            SRC_DIR:           {10}
+            RDS  			   {11};
             """.\
             format(env.user, env.key_filename, env.hosts,
                    env.host_string, env.postfix, env.APP_DIR_ABS,
                    env.APP_DIR, env.USERS, env.HOME, env.PREFIX, 
-                   env.src_dir))
+                   env.src_dir, env.db_host))
 
 
 
@@ -1171,7 +1197,20 @@ def test_env():
     tags = 'instance:dev'
     host_names = create_instance(env.instance_name, tags , use_elastic_ip, [public_ip])
     #TODO: test for rds first
-    #rds = create_rds('dev','rds')
+    try:
+    	rds = create_rds(RDS_DATABASE_NAME,'rds')
+    except:
+    	puts("Database exists")
+    #TODO: Save rds host somewhere
+    try:
+    	with open(DB_FILE,'a') as rds_file:
+    		rds_file.write('{DBInstance[Endpoint][Address]}:{DBInstance[Endpoint][Port]}\n'.format(**rds) )
+    except:
+    	rds_client = boto3.client('rds')
+    	rds = rds_client.describe_db_instances()
+    	with open(DB_FILE,'a') as rds_file:
+    		rds_file.write('{DBInstances[0][Endpoint][Address]}:{DBInstances[0][Endpoint][Port]}\n'.format(**rds) )
+
     env.hosts = host_names
     if not env.host_string:
         env.host_string = env.hosts[0]
@@ -1250,6 +1289,7 @@ def init_deploy():
     http://ec2-52-62-205-115.ap-southeast-2.compute.amazonaws.com/mukurtucms/install.php?profile=mukurtu
     """
     #check if git repo exists pull else clone
+    #TODO: Create private dir else where and make sure it is settable by www-data 
     print(red("Initialising deployment"))
     set_env()
     with settings(user='ubuntu'):
@@ -1278,12 +1318,41 @@ def init_deploy():
 	    else:
 	    	sudo("mkdir {}".format(sites_dir))
 	    	sudo('chmod a+w sites/default/files')
-	    sudo('cp sites/default/default.settings.php sites/default/settings.php')
+
+	    #TODO: 
+	    #	 - We need to set our RDS values in settings.php
+	    #
+	    sudo("head -n 572 sites/default/default.settings.php  > sites/default/settings.php")
+	    sudo("""echo "$databases" = array (
+  'default' =>
+  array (
+    'default' =>
+    array (
+      'database' => '{}',
+      'username' => '{}',
+      'password' => '{}',
+      'host' => '{}',
+      'port' => '{}',
+      'driver' => 'mysql',
+      'prefix' => '',
+    ),
+  ),
+);
+
+
+### mukurtu customizations (generally leave as is)
+"$conf"['error_level'] = 0;      >> sites/default/settings.php
+	    	""".format(RDS_DATABASE_NAME, RDS_USER, DEFAULT_PASSWORD, env.db_host,env.db_port))
+	   	
+
+	   	#sudo('cp sites/default/default.settings.php sites/default/settings.php')
+	    sudo('chown root:www-data sites/default/settings.php')
 	    sudo('chmod 664 sites/default/settings.php')
 	    sudo('chmod a+w sites/default/')
 
     sudo('service apache2 restart')
-    sudo('service mysql restart')
+
+    #sudo('service mysql restart')
     #sudo('mkdir -p /etc/supervisor/')
     #sudo('mkdir -p /etc/supervisor/conf.d/')
         
@@ -1318,17 +1387,8 @@ def update_deploy():
     #sudo(virtualenv('supervisorctl restart YMAC_Return'))
     git_pull()
 
-
-    with cd(env.APP_DIR_ABS+'/YMAC_Return/src'):
-        sudo('cp nginx.conf /etc/nginx/')
-        sudo('cp rasvama.conf /etc/supervisor/conf.d/')
-        try:
-            sudo('service nginx reload')
-        except:
-            sudo('service nginx start')
-        sudo('chmod +x gunicorn_start')
-        sudo('./gunicorn_start')
-        #virtualenv('python ../db/create_db.py')
+    #Stop Apache if need be
+    #restart it 
 
 @task
 @serial
@@ -1423,7 +1483,7 @@ def test_deploy():
     system_install()
     if env.postfix:
         postfix_config()
-    install()
+    #install()
     init_deploy()
     #user_fix()
     #deploy()
