@@ -1,5 +1,5 @@
 """
-Fabric file for installing application portal servers for AWS and Mukurtu 
+Fabric file for installing application portal servers for AWS and Mukurtu
 Copyright (C) 2016  Cameron Poole
 
 This program is free software: you can redistribute it and/or modify
@@ -24,35 +24,69 @@ For a full deployment use the command
 
 fab --set postfix=False -f machine-setup/deploy.py test_deploy
 
-For a local installation under a normal user without sudo access
+# TODO check all our packages required
+# Need to insure we have Apache,  MemCached, Drush, Python, Git, Php,Supervisor
+# Need to include sudo a2enmod rewrite for mod_rewrite
+# To Permit changes in .htacccess
+# sudo nano /etc/apache2/sites-available/default
+# Once inside that file, find the following section, and change the line
+# that says AllowOverride from None to All. The section should now look
+# like this:
 
-fab -u `whoami` -H <IP address> -f machine-setup/deploy.py user_deploy
+# <Directory /var/www/>
+#                Options Indexes FollowSymLinks MultiViews
+#                AllowOverride All
+#                Order allow,deny
+#                allow from all
+# </Directory>
+# After you save and exit that file, restart apache.
+# .htacess files will now be available for all of your sites.
+# sudo service apache2 restart
+
 
 """
-#TODO:
+# TODO:
 # 1 : Major task at the moment is migratation from boto to boto3
 # 2 : Read up on elastic ip addresses
 # 3 : Read up on S3, RDS, Glacier, Route 53
-# 4 : Proper naming of groups, users etc 
+# 4 : Proper naming of groups, users etc
 # 5 : Set up S3
-import glob, inspect
+import glob
+import inspect
 
 import boto3
-from botocore.exceptions import ClientError
 import os
 import time
-import configobj
 
-from fabric.api import run, sudo, put, env, require, local, task
-from fabric.context_managers import cd, hide, settings
-from fabric.contrib.console import confirm
-from fabric.contrib.files import append, sed, comment, exists
-from fabric.decorators import task, serial
-from fabric.operations import prompt, put
-from fabric.network import ssh
-from fabric.utils import puts, abort, fastprint
+from configobj import ConfigObj
+
+from botocore.exceptions import ClientError
+
+from fabric.api import env
+from fabric.api import local
+from fabric.api import put
+from fabric.api import require
+from fabric.api import run
+from fabric.api import sudo
+from fabric.api import task
 from fabric.colors import *
+from fabric.context_managers import cd
+from fabric.context_managers import hide
+from fabric.context_managers import settings
+from fabric.contrib.console import confirm
+from fabric.contrib.files import append
+from fabric.contrib.files import comment
+from fabric.contrib.files import exists
+from fabric.contrib.files import sed
+from fabric.decorators import serial
+from fabric.decorators import task
 from fabric.exceptions import NetworkError
+from fabric.network import ssh
+from fabric.operations import prompt
+from fabric.operations import put
+from fabric.utils import abort
+from fabric.utils import fastprint
+from fabric.utils import puts
 
 from Crypto.PublicKey import RSA
 
@@ -60,244 +94,168 @@ try:
     import urllib2
 except:
     import urllib
-#Defaults
-#Defaults
+
+# Defaults
 thisDir = os.path.dirname(os.path.realpath(__file__))
 
-#USERNAME = 'ec2-user'
-USERNAME = 'ubuntu'
-POSTFIX = False 	 # Postfix is an SMTP mail server
-BRANCH = 'master'    # this is controlling which branch is used in git clone
-
-# TODO Check all AMIs are correct
-# Probably want to change region for us to ap-southeast-2
-AMI_IDs = {'Amazon':'ami-48d38c2b', 
-				'Ubuntu':'ami-69631053', 
-                'New':'ami-d9fe9be3',
-                'CentOS':'ami-5d254067',
-                'SLES':'ami-0f510a6c'}
-
-
-
-####
-ELASTIC_IP = 'False'
-APP_PYTHON_VERSION = '2.7'
-APP_PYTHON_URL = 'http://www.python.org/ftp/python/2.7.6/Python-2.7.6.tar.bz2'
-USERS = ['cjpoole','jtillman','kjames']
-ADMINISTRATORS = ['cjpoole','jtillman']
-DEFAULT_PASSWORD = "YamatjiReturns"
-GROUP = 'YMAC_Return'
-APACHE_ROOT = '/var/www/html'
-APP_DIR = '/mukurtucms' # runtime directory
-APP_DEF_DB = '/home/YMAC_Return/ '
-
-#### This should be replaced by another key and security group
-AWS_REGION = 'ap-southeast-2'
-AWS_PROFILE = 'YMACRETURN'
-KEY_NAME = 'ymac_main'
-AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
-AWS_SEC_GROUP = 'YMACRETURN' # Security group allows SSH and other ports
-
-
-AMI_NAME = 'Ubuntu'
-AMI_ID = AMI_IDs[AMI_NAME]
-INSTANCE_NAME = 'YMAC_RETURN_YINHAWANGA'
-INSTANCE_TYPE = 't2.micro'
-INSTANCES_FILE = os.path.expanduser('~/.aws/aws_instances')
-RDS_PACKAGE = "MySQL"
-RDS_TYPE = "db." + INSTANCE_TYPE
-RDS_STORAGE = 5
-RDS_MAINTAINENCE = "Sun:01:00-Sun:02:00"
-RDS_BACKUP_DAYS = 7
-RDS_BACKUP_TIME = "02:15-03:15"
-RDS_DATABASE_NAME = 'ymacrom'
-RDS_HOST = "dev-dev.cgacg8wyoavj.ap-southeast-2.rds.amazonaws.com"
-RDS_PORT = '3306'
-RDS_USER = USERS[0]
-
-#### This should be replaced by another key and security group
-SECURITY_GROUPS = ['YMAC_ROOT', 'YMAC_return_basic']
-ADMIN_POLICIES = [ 
-					'AmazonRDSFullAccess',
- 					'AmazonEC2FullAccess',
-					'AmazonS3FullAccess',
- 					'AmazonRoute53DomainsFullAccess',
- 					'AdministratorAccess',
-					'AmazonGlacierFullAccess',
-					'IAMFullAccess',
-					'ResourceGroupsandTagEditorFullAccess'
-					]
-
-BASIC_POLICIES = [
-					'AmazonGlacierReadOnlyAccess',
-					'AmazonRDSReadOnlyAccess',
- 					'AmazonEC2ReadOnlyAccess',
-					'AmazonS3ReadOnlyAccess',
-					'ResourceGroupsandTagEditorReadOnlyAccess'
-					]
-
-ADMINGROUP = SECURITY_GROUPS[0]
-
-
-
-#User will have to change and ensure they can pull from git
-GITUSER = 'pooli3'
-#GITREPO = 'github.com/Pooli3/YMAC_Returns'
-GITREPO = 'github.com/MukurtuCMS/mukurtucms'
-
-#Keep track of hosts
-HOSTS_FILE = 'logs/hosts_file'
-DB_FILE = 'logs/rds_file'
-
-#Keep log of process
-ssh.util.log_to_file('logs/setup.log',10)
-
-#Check Boto 
-# TODO I believe Boto config actually just checks you ~/.aws/cofig file
-BOTO_CONFIG = os.path.expanduser('~/.boto')
-AWS_CONFIG = os.path.expanduser('~/.aws/config')
-
-# TODO check all our packages required
-#Need to insure we have Apache,  MemCached, Drush, Python, Git, Php, Supervisor
-# Need to include sudo a2enmod rewrite for mod_rewrite
-# To Permit changes in .htacccess
-#sudo nano /etc/apache2/sites-available/default
-#Once inside that file, find the following section, and change the line that says AllowOverride from None to All. The section should now look like this:
-
-# <Directory /var/www/>
-#                Options Indexes FollowSymLinks MultiViews
-#                AllowOverride All
-#                Order allow,deny
-#                allow from all
- #</Directory>
-#After you save and exit that file, restart apache. .htacess files will now be available for all of your sites.
-#sudo service apache2 restart
-YUM_PACKAGES = [] 
-
-#SHOULD MAYBE BE MYSQL-CLIENT
-APT_PACKAGES = [
-        'libreadline-dev',
-        'php5-common',
-        'libapache2-mod-php5',
-        'php5-cli',
-        'php5-memcache',
-        'memcached',
-        'php-pear',
-        'php5-mysql',
-        'php5-gd',
-        'php5-curl',
-        'libssh2-php',
-        'python-pip',
-        'mysql-client',
-        'git'
-        ]
-
-
-PIP_PACKAGES = [
-        'boto',
-        'supervisor',
-        'fabric',
-        ]
-
 PUBLIC_KEYS = os.path.expanduser('~/.ssh')
-# WEB_HOST = 0
-# UPLOAD_HOST = 1
-# DOWNLOAD_HOST = 2
 
-@task
-def write_to_config():
-	config = ConfigObj()
-    config['Server'] = { 'APT_PACKAGES' : APT_PACKAGES, 'PIP_PACKAGES' : PIP_PACKAGES
-    config['Logs'] = {}
-    config['AWS'] = {'key': 'value', 'key2': ['val1', 'val2']}
-    config['Mukurtu Setup'] = {'key': 'value', 'key2': ['val1', 'val2']}
-    config.filename = "mukurtucms.config"
-    config.write()
-	pass
+config.filename = "mukurtucms.config"
+config.write()
 
+config.ConfigObj("mukurtucms.config")
+
+# Set up server values
+server_conf = config['Server']
+APT_PACKAGES = server_conf['APT_PACKAGES']
+PIP_PACKAGES = server_conf['PIP_PACKAGES']
+USERNAME = server_conf['ROOT_USER']
+
+# Logging files
+log_conf = config['Logs']
+HOSTS_FILE = log_conf['HOSTS_FILE']
+DB_FILE = log_conf['DB_FILE']
+SETUP_FILE = log_conf['SETUP_FILE']
+EC2_LOG = log_conf['EC2_LOG']
+ssh.util.log_to_file(SETUP_FILE, 10)
+
+# EC2 values
+ec2_conf = config['EC2']
+POSTFIX = ec2_conf['POSTFIX']
+AMI_IDs = ec2_conf['AMI_IDs']
+AMI_NAME = ec2_conf['AMI_NAME']
+AMI_ID = AMI_IDS[AMI_NAME]
+ELASTIC_IP = ec2_conf['ELASTIC_IP']
+APP_PYTHON_VERSION = ec2_conf['APP_PYTHON_VERSION']
+APP_PYTHON_URL = ec2_conf['APP_PYTHON_URL']
+INSTANCE_NAME = ec2_conf['INSTANCE_NAME']
+INSTANCE_TYPE = ec2_conf['INSTANCE_TYPE']
+INSTANCES_FILE = os.path.expanduser(EC2_LOG)
+
+# RDS configuration
+rds_conf = config['RDS']
+RDS_PACKAGE = rds_conf['RDS_PACKAGE']
+RDS_TYPE = rds_conf['RDS_TYPE']
+RDS_STORAGE = rds_conf['RDS_STORAGE']
+RDS_MAINTAINENCE = rds_conf['RDS_MAINTAINENCE']
+RDS_BACKUP_DAYS = rds_conf['RDS_BACKUP_DAYS']
+RDS_BACKUP_TIME = rds_conf['RDS_BACKUP_TIME']
+RDS_DATABASE_NAME = rds_conf['RDS_DATABASE_NAME']
+RDS_HOST = rds_conf['RDS_HOST']
+RDS_PORT = rds_port['RDS_PORT']
+RDS_USER = rds_conf['RDS_USER']
+
+# AWS configuration
+aws_conf = config['AWS']
+AWS_REGION = aws_conf['AWS_REGION']
+AWS_PROFILE = aws_conf['AWS_PROFILE']
+KEY_NAME = aws_conf['KEY_NAME']
+AWS_KEY = os.path.expanduser('~/.ssh/{0}.pem'.format(KEY_NAME))
+AWS_SEC_GROUP = aws_conf['AWS_SEC_GROUP']
+SECURITY_GROUPS = aws_conf['SECURITY_GROUPS']
+ADMIN_POLICIES = aws_conf['ADMIN_POLICIES']
+BASIC_POLICIES = aws_conf['BASIC_POLICIES']
+ADMINGROUP = aws_conf['ADMINGROUP']
+BOTO_CONFIG = os.path.expanduser(aws_conf['BOTO_CONFIG'])
+AWS_CONFIG = os.path.expanduser(aws_conf['AWS_CONFIG'])
+
+# Set up mukurtu cms stuff
+mucms_conf = config['Mukurtu Setup']
+GITUSER = mucms_conf['git_user']
+GITREPO = mucms_conf['git_repo']
+BRANCH = mucms_conf['git_branch']
+USERS = mucms_conf['users']
+ADMINISTRATORS = mucms_conf['ADMINISTRATORS']
+GROUP = mucms_conf['GROUP']
+DEFAULT_PASSWORD = mucms_conf['DEFAULT_PASSWORD']
+APACHE_ROOT = mucms_conf['APACHE_ROOT']
+APP_DIR = mucms_conf['APP_DIR']
+APP_DEF_DB = mucms_conf['APP_DEF_DB']
+
+# s3_conf = config['S3']
 
 @task
 def create_aws_user_groups():
-	"""
-	Creates users and groups for AWS with specific permissions
-	"""
-	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
-	client = boto3.client('iam')
+    """
+    Creates users and groups for AWS with specific permissions
+    """
+    puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
+    client = boto3.client('iam')
 
-	try:
-		get_groups = client.list_groups()['Groups']
-		created_groups = [ group['GroupName'] for group in  [ json for json in get_groups ] ]
-	except:
-		puts( red("Couldn't get group list. Code {HTTPStatusCode} ".format(**get_groups['ResponseMetadata'])) )
-	#Create security groups
-	for sg in SECURITY_GROUPS:
-		if sg not in created_groups:
-			try:
-				client.create_group(GroupName=sg)
-			except ClientError as ce:
-				puts( red("Problem creating {group} error is {message}".format(group=sg,message=ce.message)))
-	#Create users and attach to groups
-	for username in USERS:
-		try:
-			get_users = client.list_users()['Users'] 
-			created_users = [ user['UserName'] for user in  [ json for json in get_users ] ]
-		except:
-			puts( red("Couldn't get user list {HTTPStatusCode}".format(**get_users['ResponseMetadata']) ) )
-		if username not in created_users:
-			try:
-				client.create_user(UserName=username)
-				response = client.create_login_profile(
-    				UserName=username,
-    				Password=DEFAULT_PASSWORD,
-    				PasswordResetRequired=True)
-			except ClientError as ce:
-				puts( red("Problem creating {user} error is {message}".format(user=username,message=ce.message)))
-		#Create our admins
-		if username in ADMINISTRATORS:
-			try:
-				client.add_user_to_group(GroupName=ADMINGROUP,
-									UserName=username
-										)
-			except ClientError as ce:
-				puts( red("Problem attaching {user} \
-					to ADMIN GROUP error is {message}".format(
-														user=username,
-														message=ce.message)))
-		else:
-			for groups in SECURITY_GROUPS:
-				if groups not in ADMINGROUP:
-					try:
-						client.add_user_to_group(GroupName=groups,
-											UserName=username)
-					except ClientError as ce:
-						puts( red("Problem attaching {user} \
-							to {group} error is {message}".format(
-																group=groups,
-																user=username,
-																message=ce.message)))
-	#Attach our security policies to our groups
-	arn_polstr = "arn:aws:iam::aws:policy/"
-	for policy in ADMIN_POLICIES:
-		pol_arn = arn_polstr + policy
-		try:
-			client.attach_group_policy(GroupName=ADMINGROUP,
-									PolicyArn=pol_arn)
-		except ClientError as ce:
-			puts( red("Problem attaching policy {policy}  to {group} error is {message}".format(
-				policy=pol_arn,
-				group=ADMINGROUP,
-				message=ce.message)))
-	for policy in BASIC_POLICIES:
-		pol_arn = arn_polstr + policy
-		try:
-			client.attach_group_policy(GroupName=SECURITY_GROUPS[1],
-									PolicyArn=pol_arn)
-		except ClientError as ce:
-			puts( red("Problem attaching policy {policy}  to {group} error is {message}".format(
-				policy=pol_arn,
-				group=SECURITY_GROUPS[1],
-				message=ce.message)))
-	puts(green("\n***** Completed Setting up User, Groups,Roles and Policies *****\n"))
+    try:
+        get_groups = client.list_groups()['Groups']
+        created_groups = [group['GroupName'] for group in [json for json in get_groups ] ]
+    except:
+        puts( red("Couldn't get group list. Code {HTTPStatusCode} ".format(**get_groups['ResponseMetadata'])) )
+    # Create security groups
+    for sg in SECURITY_GROUPS:
+        if sg not in created_groups:
+            try:
+                client.create_group(GroupName=sg)
+            except ClientError as ce:
+                puts( red("Problem creating {group} error is {message}".format(group=sg,message=ce.message)))
+    # Create users and attach to groups
+    for username in USERS:
+        try:
+            get_users = client.list_users()['Users'] 
+            created_users = [ user['UserName'] for user in  [ json for json in get_users ] ]
+        except:
+            puts( red("Couldn't get user list {HTTPStatusCode}".format(**get_users['ResponseMetadata']) ) )
+        if username not in created_users:
+            try:
+                client.create_user(UserName=username)
+                response = client.create_login_profile(
+                    UserName=username,
+                    Password=DEFAULT_PASSWORD,
+                    PasswordResetRequired=True)
+            except ClientError as ce:
+                puts( red("Problem creating {user} error is {message}".format(user=username,message=ce.message)))
+        # Create our admins
+        if username in ADMINISTRATORS:
+            try:
+                client.add_user_to_group(GroupName=ADMINGROUP,
+                                    UserName=username
+                                        )
+            except ClientError as ce:
+                puts( red("Problem attaching {user} \
+                    to ADMIN GROUP error is {message}".format(
+                                                        user=username,
+                                                        message=ce.message)))
+        else:
+            for groups in SECURITY_GROUPS:
+                if groups not in ADMINGROUP:
+                    try:
+                        client.add_user_to_group(GroupName=groups,
+                                            UserName=username)
+                    except ClientError as ce:
+                        puts( red("Problem attaching {user} \
+                            to {group} error is {message}".format(
+                                                                group=groups,
+                                                                user=username,
+                                                                message=ce.message)))
+    # Attach our security policies to our groups
+    arn_polstr = "arn:aws:iam::aws:policy/"
+    for policy in ADMIN_POLICIES:
+        pol_arn = arn_polstr + policy
+        try:
+            client.attach_group_policy(GroupName=ADMINGROUP,
+                                    PolicyArn=pol_arn)
+        except ClientError as ce:
+            puts( red("Problem attaching policy {policy}  to {group} error is {message}".format(
+                policy=pol_arn,
+                group=ADMINGROUP,
+                message=ce.message)))
+    for policy in BASIC_POLICIES:
+        pol_arn = arn_polstr + policy
+        try:
+            client.attach_group_policy(GroupName=SECURITY_GROUPS[1],
+                                    PolicyArn=pol_arn)
+        except ClientError as ce:
+            puts( red("Problem attaching policy {policy}  to {group} error is {message}".format(
+                policy=pol_arn,
+                group=SECURITY_GROUPS[1],
+                message=ce.message)))
+    puts(green("\n***** Completed Setting up User, Groups,Roles and Policies *****\n"))
 
 
 @task
@@ -312,15 +270,15 @@ def aws_create_key_pair():
     client = boto3.client('ec2')
     respone = False
     try:
-    	response = client.describe_key_pairs(KeyNames=[KEY_NAME])
-    	puts(green('***** KEY_PAIR exists! *******'))
+        response = client.describe_key_pairs(KeyNames=[KEY_NAME])
+        puts(green('***** KEY_PAIR exists! *******'))
     except: #key does not exist on AWS
         kp = client.create_key_pair(KeyName=KEY_NAME)
         puts(green("\n******** KEY_PAIR created!********\n"))
         if os.path.exists(os.path.expanduser(AWS_KEY)):
             os.unlink(AWS_KEY)
         with open(os.path.expanduser(AWS_KEY),'w') as key_file:
-        	key_file.write(kp['KeyMaterial'])
+            key_file.write(kp['KeyMaterial'])
         Rkey = RSA.importKey(kp['KeyMaterial'])
         env.SSH_PUBLIC_KEY = Rkey.exportKey('OpenSSH')
         puts(green("\n******** KEY_PAIR written!********\n"))
@@ -332,7 +290,7 @@ def aws_create_key_pair():
         Rkey = RSA.importKey(response['KeyMaterial'])
         env.SSH_PUBLIC_KEY = Rkey.exportKey('OpenSSH')
         with open(os.path.expanduser(AWS_KEY),'w') as key_file:
-        	key_file.write(kp['KeyMaterial'])
+            key_file.write(kp['KeyMaterial'])
         Rkey = RSA.importKey(kp['KeyMaterial'])
         puts(green("\n******** KEY_PAIR written!********\n"))
     local('chmod 400 {}'.format(os.path.expanduser(AWS_KEY)))
@@ -355,43 +313,43 @@ def check_create_aws_sec_group():
         response = filter(lambda x: x['GroupName'] == AWS_SEC_GROUP, sec['SecurityGroups'])[0]
     else:
         response = client.create_security_group(GroupName=AWS_SEC_GROUP,
-        										Description='YMACRETURN default permissions')
+                                                Description='YMACRETURN default permissions')
     ymrsg = ec2.SecurityGroup(response['GroupId'])
-    #SSH
+    # SSH
     try:
-    	ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=22, ToPort=22, CidrIp='0.0.0.0/0')
-    	#HTTP
-    	ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=80, ToPort=80, CidrIp='0.0.0.0/0')
-    	ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=443, ToPort=443, CidrIp='0.0.0.0/0')
-    	#MySQL
-    	ymrsg.authorize(IpProtocol='tcp', FromPort=3306, ToPort=3306, CidrIp='0.0.0.0/0')
+        ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=22, ToPort=22, CidrIp='0.0.0.0/0')
+        # HTTP
+        ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=80, ToPort=80, CidrIp='0.0.0.0/0')
+        ymrsg.authorize_ingress(IpProtocol='tcp', FromPort=443, ToPort=443, CidrIp='0.0.0.0/0')
+        # MySQL
+        ymrsg.authorize(IpProtocol='tcp', FromPort=3306, ToPort=3306, CidrIp='0.0.0.0/0')
     except:
-    	puts("security_group already exists")
-            #NOTE NOT SURE ABOUT THE FOLLOWING
-    #ymrsg.authorize('tcp', 5678, 5678, '0.0.0.0/0')
+        puts("security_group already exists")
+            # NOTE NOT SURE ABOUT THE FOLLOWING
+    # ymrsg.authorize('tcp', 5678, 5678, '0.0.0.0/0')
     
-    #ymrsg.authorize('tcp', 7777, 7777, '0.0.0.0/0')
-    #ymrsg.authorize('tcp', 8888, 8888, '0.0.0.0/0')
+    # ymrsg.authorize('tcp', 7777, 7777, '0.0.0.0/0')
+    # ymrsg.authorize('tcp', 8888, 8888, '0.0.0.0/0')
     puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
 
 
 @task
 def delete_key_pair():
-	"""
-	delete our key key_pair
-	"""
-	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
-	try:
-		client = boto3.client('ec2')
-		response = client.delete_key_pair(KeyName=KEY_NAME)
-		if response['ResponseMetadata']['HTTPStatusCode'] == 200:
-			puts(green("Deleted {}".format(KEY_NAME)))
-		else:
-			puts(red("Something bad happened {}".format(response)))
-	except:
-		puts(red("Something bad happened, Key probably doesn't exist"))
-	puts(green("\n******** Task {0} finished!********\n".\
+    """
+    delete our key key_pair
+    """
+    puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
+    try:
+        client = boto3.client('ec2')
+        response = client.delete_key_pair(KeyName=KEY_NAME)
+        if response['ResponseMetadata']['HTTPStatusCode'] == 200:
+            puts(green("Deleted {}".format(KEY_NAME)))
+        else:
+            puts(red("Something bad happened {}".format(response)))
+    except:
+        puts(red("Something bad happened, Key probably doesn't exist"))
+    puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
 
 
@@ -408,7 +366,7 @@ def whatsmyip():
     try:
         myip = urllib2.urlopen(whatismyip).readlines()[0]
     except NameError:
-    	myip = urllib.urlopen(whatismyip).readlines()[0]
+        myip = urllib.urlopen(whatismyip).readlines()[0]
     except:
         puts(red('Unable to derive IP through {0}'.format(whatismyip)))
         myip = '127.0.0.1'
@@ -449,29 +407,29 @@ def check_ssh():
 
 @task
 def get_host_names():
-	"""
-	Sets host names by creating a new instance
-	Or checking our hosts file
-	"""
-	with open(HOSTS_FILE,'r') as hf:
-		hostnames = [ line.rstrip("\n") for line in hf.readlines() ] 
-	puts(green("Found hosts {}".format(hostnames)))
-	env.hosts = hostnames
-	if not env.host_string:
-		env.host_string = env.hosts[0]
+    """
+    Sets host names by creating a new instance
+    Or checking our hosts file
+    """
+    with open(HOSTS_FILE,'r') as hf:
+        hostnames = [ line.rstrip("\n") for line in hf.readlines() ] 
+    puts(green("Found hosts {}".format(hostnames)))
+    env.hosts = hostnames
+    if not env.host_string:
+        env.host_string = env.hosts[0]
 
 @task
 def get_db():
-	if os.path.isdir(DB_FILE):
-		with open(DB_FILE,'r') as db_file:
-			for line in db_file.xreadlines():
-				line = line.rstrip("\n")
-				db, port = line.split(":")
-	else:
-		client = boto3.client('rds')
-		rds = client.describe_db_instances()
-		db, port = '{DBInstances[0][Endpoint][Address]}:{DBInstances[0][Endpoint][Port]}\n'.format(**rds).split(":")
-	return (db, port)
+    if os.path.isdir(DB_FILE):
+        with open(DB_FILE,'r') as db_file:
+            for line in db_file.xreadlines():
+                line = line.rstrip("\n")
+                db, port = line.split(":")
+    else:
+        client = boto3.client('rds')
+        rds = client.describe_db_instances()
+        db, port = '{DBInstances[0][Endpoint][Address]}:{DBInstances[0][Endpoint][Port]}\n'.format(**rds).split(":")
+    return (db, port)
 
 @task
 def set_env():
@@ -502,12 +460,12 @@ def set_env():
         env.src_dir = thisDir
     require('hosts', provided_by=[get_host_names, test_env])
     if not env.has_key('hosts') or not env.hosts:
-    	env.hosts = get_host_names()
+        env.hosts = get_host_names()
     if not env.has_key('host_string') or not env.host_string:
-    	env.host_string = get_host_names()
-    #Maybe load hosts from host file
-    #if not env.has_key('host_string'):
-    #open hosts file and attempt to load host from that
+        env.host_string = get_host_names()
+    # Maybe load hosts from host file
+    # if not env.has_key('host_string'):
+    # open hosts file and attempt to load host from that
     if not env.has_key('HOME') or env.HOME[0] == '~' or not env.HOME:
         env.HOME = run("echo ~{0}".format(USERS[0]))
     if not env.has_key('PREFIX') or env.PREFIX[0] == '~' or not env.PREFIX:
@@ -535,10 +493,10 @@ def set_env():
             HOME:              {8};
             APP_DIR_ABS:       {5};
             APP_DIR:           {6};
-            USERS:        	   {7};
+            USERS:             {7};
             PREFIX:            {9};
             SRC_DIR:           {10}
-            RDS  			   {11};
+            RDS                {11};
             """.\
             format(env.user, env.key_filename, env.hosts,
                    env.host_string, env.postfix, env.APP_DIR_ABS,
@@ -555,66 +513,66 @@ def check_setup():
     Security keys, possibly check permissions
     """
     if not os.path.isfile(BOTO_CONFIG) and not os.path.isfile(AWS_CONFIG):
-    	abort('Require boto config or aws config to create instance')
-    #Check if user can import Flask
-    #Check if user can import boto
+        abort('Require boto config or aws config to create instance')
+    # Check if user can import Flask
+    # Check if user can import boto
     
 
 @task
 def create_rds(name, tag, username='cjpoole', password='YamatjiReturns', dbtype='DEV', enhanced_monitoring=False):
-	"""
-	Create our RDS Instance
-	:param name: the name to be used for this instance
-	:param tags: tag to be associated with our instance
-	:param type: DEV or PRODUCTION
-	#NEED TO SET SecurityGroup = YMACRETURN
+    """
+    Create our RDS Instance
+    :param name: the name to be used for this instance
+    :param tags: tag to be associated with our instance
+    :param type: DEV or PRODUCTION
+    # NEED TO SET SecurityGroup = YMACRETURN
 
-	NOTE: You will need to create emaccess role if you want enhanced MonitoringInterval
-			- see http://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_Monitoring.html#USER_Monitoring.OS.IAMRole
-	"""
+    NOTE: You will need to create emaccess role if you want enhanced MonitoringInterval
+            - see http://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_Monitoring.html#USER_Monitoring.OS.IAMRole
+    """
 
-	#TODO:  Not sure about VPC Security Groups 
-	puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
-	ec2_client = boto3.client('ec2')
-	sec_groups = ec2_client.describe_security_groups(GroupNames=[AWS_SEC_GROUP])
-	group_id = sec_groups['SecurityGroups'][0]['GroupId']
-	client = boto3.client('rds')
-	RDS_TAGS = [ {'Key':'Name', 'Value':tag} ]
-	if enhanced_monitoring:
-		reponse = client.create_db_instance(
-								DBName=name,
-								DBInstanceIdentifier="{}-{}".format(name,dbtype),
-								AllocatedStorage=RDS_STORAGE,
-								DBInstanceClass=RDS_TYPE,
-								Engine=RDS_PACKAGE,
-								MasterUsername=username,
-								MasterUserPassword=password,
-								PreferredMaintenanceWindow=RDS_MAINTAINENCE,
-								BackupRetentionPeriod=RDS_BACKUP_DAYS,
-								PreferredBackupWindow=RDS_BACKUP_TIME,
-								Tags=RDS_TAGS,
-								MonitoringInterval=15,
-								MonitoringRoleArn='arn:aws:iam::512935204824:role/emaccess',
-								VpcSecurityGroupIds=[group_id]
-								)
-	else:
-		response = client.create_db_instance(
-								DBName=name,
-								DBInstanceIdentifier="{}-{}".format(name,dbtype),
-								AllocatedStorage=RDS_STORAGE,
-								DBInstanceClass=RDS_TYPE,
-								Engine=RDS_PACKAGE,
-								MasterUsername=username,
-								MasterUserPassword=password,
-								PreferredMaintenanceWindow=RDS_MAINTAINENCE,
-								BackupRetentionPeriod=RDS_BACKUP_DAYS,
-								PreferredBackupWindow=RDS_BACKUP_TIME,
-								VpcSecurityGroupIds=[group_id],
-								Tags=RDS_TAGS)
-	puts(blue(response))
-	puts(green("\n******** Task {0} finished!********\n".\
+    # TODO:  Not sure about VPC Security Groups 
+    puts(blue("\n***** Entering task {0} *****\n".format(inspect.stack()[0][3])))
+    ec2_client = boto3.client('ec2')
+    sec_groups = ec2_client.describe_security_groups(GroupNames=[AWS_SEC_GROUP])
+    group_id = sec_groups['SecurityGroups'][0]['GroupId']
+    client = boto3.client('rds')
+    RDS_TAGS = [ {'Key':'Name', 'Value':tag} ]
+    if enhanced_monitoring:
+        reponse = client.create_db_instance(
+                                DBName=name,
+                                DBInstanceIdentifier="{}-{}".format(name,dbtype),
+                                AllocatedStorage=RDS_STORAGE,
+                                DBInstanceClass=RDS_TYPE,
+                                Engine=RDS_PACKAGE,
+                                MasterUsername=username,
+                                MasterUserPassword=password,
+                                PreferredMaintenanceWindow=RDS_MAINTAINENCE,
+                                BackupRetentionPeriod=RDS_BACKUP_DAYS,
+                                PreferredBackupWindow=RDS_BACKUP_TIME,
+                                Tags=RDS_TAGS,
+                                MonitoringInterval=15,
+                                MonitoringRoleArn='arn:aws:iam::512935204824:role/emaccess',
+                                VpcSecurityGroupIds=[group_id]
+                                )
+    else:
+        response = client.create_db_instance(
+                                DBName=name,
+                                DBInstanceIdentifier="{}-{}".format(name,dbtype),
+                                AllocatedStorage=RDS_STORAGE,
+                                DBInstanceClass=RDS_TYPE,
+                                Engine=RDS_PACKAGE,
+                                MasterUsername=username,
+                                MasterUserPassword=password,
+                                PreferredMaintenanceWindow=RDS_MAINTAINENCE,
+                                BackupRetentionPeriod=RDS_BACKUP_DAYS,
+                                PreferredBackupWindow=RDS_BACKUP_TIME,
+                                VpcSecurityGroupIds=[group_id],
+                                Tags=RDS_TAGS)
+    puts(blue(response))
+    puts(green("\n******** Task {0} finished!********\n".\
         format(inspect.stack()[0][3])))
-	return response
+    return response
 
 
 @task
@@ -653,13 +611,13 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
 
 
     reservations = client.run_instances(
-    									ImageId=AMI_IDs[AMI_NAME], 
-    									InstanceType=INSTANCE_TYPE,
-                                    	KeyName=KEY_NAME, 
-                                    	SecurityGroups=[AWS_SEC_GROUP],
-                                    	MinCount=number_instances, 
-                                    	MaxCount=number_instances,
-                                 		)
+                                        ImageId=AMI_IDs[AMI_NAME], 
+                                        InstanceType=INSTANCE_TYPE,
+                                        KeyName=KEY_NAME, 
+                                        SecurityGroups=[AWS_SEC_GROUP],
+                                        MinCount=number_instances, 
+                                        MaxCount=number_instances,
+                                        )
 
     instances = reservations['Instances']
     # Sleep so Amazon recognizes the new instance
@@ -679,19 +637,19 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
         fastprint('.')
         time.sleep(5)
         for instance in stat:
-        	instance.reload()
+            instance.reload()
         running = [x.state['Name'] =='running' for x in stat]
     puts('.') #enforce the line-end
 
     # Local user and host
     userAThost = os.environ['USER'] + '@' + whatsmyip()
 
-    #Create tag list of dicts
+    # Create tag list of dicts
     ec2_tags = [ dict(zip(['Key','Value'],tag.split(":"))) for tag in [ tstr for tstr in tags.split("|")] ]
     # Tag the instance
     ec2_tags.append({'Key': 'Created By','Value':userAThost})
     for i, instance in enumerate(stat):
-    	ec2_tags.append({'Key': 'Name', 'Value': names[i]} )
+        ec2_tags.append({'Key': 'Name', 'Value': names[i]} )
         instance.create_tags(Tags=ec2_tags)
         ec2_tags.pop()
 
@@ -713,7 +671,7 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
         print blue('fab terminate:instance_id={0}'.format(instance.id))
         host_names.append(str(instance.public_dns_name))
         with open( HOSTS_FILE, 'a' ) as hf:
-        	hf.write("{}\n".format(instance.public_dns_name))
+            hf.write("{}\n".format(instance.public_dns_name))
 
     # The instance is started, but not useable (yet)
     puts('Started the instance(s) now waiting for the SSH daemon to start.')
@@ -722,7 +680,7 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
     if AMI_NAME in ['CentOS', 'SLES']:
         env.user = 'root'
     elif AMI_NAME == 'Ubuntu':
-    	env.user = 'ubuntu'
+        env.user = 'ubuntu'
     else:
         env.user = USERNAME
     check_ssh()
@@ -730,15 +688,15 @@ def create_instance(names,  tags='', use_elastic_ip=False, public_ips=''):
 
 @task
 def destroy_all_instances():
-	"""
-	Shuts down all ec2 instances
-	TODO: remove these instances from mour hosts file
-	"""
-	ec2_client = boto3.client('ec2')
-	instance_ids = [ i[0]['InstanceId'] for i in [ inst['Instances'] for inst in 
-					 ec2_client.describe_instances()['Reservations'] ] ]
-	ec2_client.terminate_instances(InstanceIds=instance_ids)
-	local('rm {}'.format(HOSTS_FILE))
+    """
+    Shuts down all ec2 instances
+    TODO: remove these instances from mour hosts file
+    """
+    ec2_client = boto3.client('ec2')
+    instance_ids = [ i[0]['InstanceId'] for i in [ inst['Instances'] for inst in 
+                     ec2_client.describe_instances()['Reservations'] ] ]
+    ec2_client.terminate_instances(InstanceIds=instance_ids)
+    local('rm {}'.format(HOSTS_FILE))
 
 @task
 def get_linux_flavor():
@@ -857,7 +815,7 @@ def check_yum(package):
     with hide('stdout','running','stderr'):
         res = sudo('yum --assumeyes --quiet list installed {0}'.format(package), \
              combine_stderr=True, warn_only=True)
-    #print res
+    # print res
     if res.find(package) > 0:
         print "Installed package {0}".format(package)
         return True
@@ -980,7 +938,7 @@ def system_install():
             install_yum(package)
 
     elif ('Ubuntu' in linux_flavor):
-    	sudo('apt-get update')
+        sudo('apt-get update')
         for package in APT_PACKAGES:
             install_apt(package)
     else:
@@ -1080,18 +1038,18 @@ def user_setup():
         sudo('cp {0}/.ssh/authorized_keys /home/{1}/.ssh/authorized_keys'.format(home, user))
         sudo('chmod 600 /home/{0}/.ssh/authorized_keys'.format(user))
         sudo('chown {0}:{1} /home/{0}/.ssh/authorized_keys'.format(user, GROUP))
-    #change to allow group permissions to acces home
-        #sudo('chmod g+rwx /home/{0}/'.format(user))
+    # change to allow group permissions to acces home
+        # sudo('chmod g+rwx /home/{0}/'.format(user))
         
     # create YMAC_Return directories and chown to correct user and group
     sudo('mkdir -p {0}'.format(env.APP_DIR_ABS))
     # This not working for some reason
     sudo('chown -R {0}:{1} {2}'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
     
-    #These lines are unnecessary i think
-    #sudo('mkdir -p {0}/../YMAC_Return'.format(env.APP_DIR_ABS))
-    #sudo('chown {0}:{1} {2}/../YMAC_Return'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
-    #sudo('usermod -a -G {} ec2-user'.format(GROUP))
+    # These lines are unnecessary i think
+    # sudo('mkdir -p {0}/../YMAC_Return'.format(env.APP_DIR_ABS))
+    # sudo('chown {0}:{1} {2}/../YMAC_Return'.format(env.USERS[0], GROUP, env.APP_DIR_ABS))
+    # sudo('usermod -a -G {} ec2-user'.format(GROUP))
     print "\n\n******** USER SETUP COMPLETED!********\n\n"
 
 
@@ -1184,9 +1142,9 @@ def test_env():
     if env.AMI_NAME in ['CentOS', 'SLES']:
         env.user = 'root'
     elif 'Ubuntu' in env.AMI_NAME:
-    	env.user = 'ubuntu'
+        env.user = 'ubuntu'
     else:
-    	env.user = 'ec2-user'
+        env.user = 'ec2-user'
     # Check and create the key_pair if necessary
     aws_create_key_pair()
     # Check user, groups and policies
@@ -1196,20 +1154,20 @@ def test_env():
     # Create the instance in AWS
     tags = 'instance:dev'
     host_names = create_instance(env.instance_name, tags , use_elastic_ip, [public_ip])
-    #TODO: test for rds first
+    # TODO: test for rds first
     try:
-    	rds = create_rds(RDS_DATABASE_NAME,'rds')
+        rds = create_rds(RDS_DATABASE_NAME,'rds')
     except:
-    	puts("Database exists")
-    #TODO: Save rds host somewhere
+        puts("Database exists")
+    # TODO: Save rds host somewhere
     try:
-    	with open(DB_FILE,'a') as rds_file:
-    		rds_file.write('{DBInstance[Endpoint][Address]}:{DBInstance[Endpoint][Port]}\n'.format(**rds) )
+        with open(DB_FILE,'a') as rds_file:
+            rds_file.write('{DBInstance[Endpoint][Address]}:{DBInstance[Endpoint][Port]}\n'.format(**rds) )
     except:
-    	rds_client = boto3.client('rds')
-    	rds = rds_client.describe_db_instances()
-    	with open(DB_FILE,'a') as rds_file:
-    		rds_file.write('{DBInstances[0][Endpoint][Address]}:{DBInstances[0][Endpoint][Port]}\n'.format(**rds) )
+        rds_client = boto3.client('rds')
+        rds = rds_client.describe_db_instances()
+        with open(DB_FILE,'a') as rds_file:
+            rds_file.write('{DBInstances[0][Endpoint][Address]}:{DBInstances[0][Endpoint][Port]}\n'.format(**rds) )
 
     env.hosts = host_names
     if not env.host_string:
@@ -1251,7 +1209,7 @@ def quick_job():
     if not env.has_key('APP_DIR_ABS') or not env.APP_DIR_ABS:
         env.APP_DIR_ABS = '{0}/{1}/{2}/{3}'.format('/home',USERS[0],'YMAC_Return_portal', APP_DIR)
     
-    #check if git repo exists pull else clone
+    # check if git repo exists pull else clone
     print(red("Initialising deployment"))
     set_env()
     with settings(user='ubuntu'):
@@ -1260,23 +1218,23 @@ def quick_job():
 
 @task
 def write_apache_config():
-	"""
-	Writes our config file for apache2
-	"""
-	conf_file = """<VirtualHost *:80>
+    """
+    Writes our config file for apache2
+    """
+    conf_file = """<VirtualHost *:80>
     ServerName  example.com
     ServerAdmin webmaster@example.com
     DocumentRoot /var/www/html/mukurtucms
 
     <Directory /var/www/html/mukurtucms>
-   		AllowOverride All
-   	</Directory>
+        AllowOverride All
+    </Directory>
 </VirtualHost>
 """
-	with open("default.conf", "w") as apache_conf:
-		apache_conf.write(conf_file)
+    with open("default.conf", "w") as apache_conf:
+        apache_conf.write(conf_file)
 
-	put("default.conf","/etc/apache2/sites-enabled/", use_sudo=True)
+    put("default.conf","/etc/apache2/sites-enabled/", use_sudo=True)
 
 @task
 def init_deploy():
@@ -1288,18 +1246,18 @@ def init_deploy():
 
     http://ec2-52-62-205-115.ap-southeast-2.compute.amazonaws.com/mukurtucms/install.php?profile=mukurtu
     """
-    #check if git repo exists pull else clone
-    #TODO: Create private dir else where and make sure it is settable by www-data 
+    # check if git repo exists pull else clone
+    # TODO: Create private dir else where and make sure it is settable by www-data 
     print(red("Initialising deployment"))
     set_env()
     with settings(user='ubuntu'):
-        #if check_dir(env.APP_DIR_ABS):
+        # if check_dir(env.APP_DIR_ABS):
         if check_dir(APACHE_ROOT + APP_DIR):
             puts("attempting git pull")
             git_pull()
         else:
-        	puts("attempting git_clone")
-        	git_clone()
+            puts("attempting git_clone")
+            git_clone()
     puts(green("Fixing mysql"))
     write_apache_config()
     sudo('sudo a2enmod rewrite')
@@ -1309,21 +1267,21 @@ def init_deploy():
     sudo('sudo chown -R :www-data /var/www/html/*')
     sudo('cp /etc/php5/apache2/php.ini /etc/php5/apache2/php.ini.orig')
     sudo("sed 's/expose_php = Off/expose_php = Off/' /etc/php5/apache2/php.ini \
-    	| sed 's/allow_url_fopen = On/allow_url_fopen = Off/' >  /etc/php5/apache2/php.ini")
+        | sed 's/allow_url_fopen = On/allow_url_fopen = Off/' >  /etc/php5/apache2/php.ini")
     sudo("mv /etc/apache2/sites-enabled/default.conf /etc/apache2/sites-enabled/000-default.conf")
     with cd(APACHE_ROOT + APP_DIR):
-	    sites_dir = 'sites/default/files'
-	    if check_dir(sites_dir):
-	    	sudo('chmod a+w sites/default/files')
-	    else:
-	    	sudo("mkdir {}".format(sites_dir))
-	    	sudo('chmod a+w sites/default/files')
+        sites_dir = 'sites/default/files'
+        if check_dir(sites_dir):
+            sudo('chmod a+w sites/default/files')
+        else:
+            sudo("mkdir {}".format(sites_dir))
+            sudo('chmod a+w sites/default/files')
 
-	    #TODO: 
-	    #	 - We need to set our RDS values in settings.php
-	    #
-	    sudo("head -n 572 sites/default/default.settings.php  > sites/default/settings.php")
-	    sudo("""echo "$databases" = array (
+        # TODO: 
+        #    - We need to set our RDS values in settings.php
+        #
+        sudo("head -n 572 sites/default/default.settings.php  > sites/default/settings.php")
+        sudo("""echo "$databases" = array (
   'default' =>
   array (
     'default' =>
@@ -1340,25 +1298,25 @@ def init_deploy():
 );
 
 
-### mukurtu customizations (generally leave as is)
+# mukurtu customizations (generally leave as is)
 "$conf"['error_level'] = 0;      >> sites/default/settings.php
-	    	""".format(RDS_DATABASE_NAME, RDS_USER, DEFAULT_PASSWORD, env.db_host,env.db_port))
-	   	
+            """.format(RDS_DATABASE_NAME, RDS_USER, DEFAULT_PASSWORD, env.db_host,env.db_port))
+        
 
-	   	#sudo('cp sites/default/default.settings.php sites/default/settings.php')
-	    sudo('chown root:www-data sites/default/settings.php')
-	    sudo('chmod 664 sites/default/settings.php')
-	    sudo('chmod a+w sites/default/')
+        # sudo('cp sites/default/default.settings.php sites/default/settings.php')
+        sudo('chown root:www-data sites/default/settings.php')
+        sudo('chmod 664 sites/default/settings.php')
+        sudo('chmod a+w sites/default/')
 
     sudo('service apache2 restart')
 
-    #sudo('service mysql restart')
-    #sudo('mkdir -p /etc/supervisor/')
-    #sudo('mkdir -p /etc/supervisor/conf.d/')
+    # sudo('service mysql restart')
+    # sudo('mkdir -p /etc/supervisor/')
+    # sudo('mkdir -p /etc/supervisor/conf.d/')
         
-    #check if nginx is running else
+    # check if nginx is running else
     print(red("Server setup and ready to deploy"))
-    #Think we have 
+    # Think we have 
 
 
 
@@ -1368,9 +1326,9 @@ def deploy():
     set_env()
     env.user ='ec2-user'
     print(red("Beginning Deploy:"))
-    #might need setenv 
-    #create_db()
-    #sudo(virtualenv('supervisorctl restart YMAC_Return'))
+    # might need setenv 
+    # create_db()
+    # sudo(virtualenv('supervisorctl restart YMAC_Return'))
 
 
     print(blue("Deploy finished check server {}".format(env.host_string)))
@@ -1384,11 +1342,11 @@ def update_deploy():
     TODO: maybe use zc.buildout
     """
     set_env()
-    #sudo(virtualenv('supervisorctl restart YMAC_Return'))
+    # sudo(virtualenv('supervisorctl restart YMAC_Return'))
     git_pull()
 
-    #Stop Apache if need be
-    #restart it 
+    # Stop Apache if need be
+    # restart it 
 
 @task
 @serial
@@ -1418,7 +1376,7 @@ def operations_deploy():
         ppath = check_python()
         if not ppath:
             python_setup()
-        #package_install()
+        # package_install()
     init_deploy()
 
 @task
@@ -1438,12 +1396,12 @@ def install(standalone=0):
     print(green("Setting up home directory might require chmod"))
     if env.PREFIX != env.HOME: # generate non-standard directory
         sudo('mkdir -p {0}'.format(env.PREFIX))
-    #Removing this for the moment so we can use ec2-user to deploy with root permissions
+    # Removing this for the moment so we can use ec2-user to deploy with root permissions
         sudo('chown -R {0}:{1} {2}'.format(env.USERS[0], GROUP, env.PREFIX))
     print(green("Setting up virtual env"))
-    #with settings(user=env.USERS[0]):
-        #print(green("Installing python packages"))
-        #package_install()
+    # with settings(user=env.USERS[0]):
+        # print(green("Installing python packages"))
+        # package_install()
         # more installation goes here
     print(red("\n\n******** INSTALLATION COMPLETED!********\n\n"))
 
@@ -1483,10 +1441,10 @@ def test_deploy():
     system_install()
     if env.postfix:
         postfix_config()
-    #install()
+    # install()
     init_deploy()
-    #user_fix()
-    #deploy()
+    # user_fix()
+    # deploy()
 
 
 @task
