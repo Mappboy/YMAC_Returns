@@ -7,10 +7,8 @@ Install:
 - AWSCLI: pip install awscli      (http://docs.aws.amazon.com/cli/latest/reference/index.html#cli-aws)
 - fabric: pip install fabric
     
-This should all be done in boto by running fab once cloned
-Decide if we run from shell or in fabfile in any case:
-aws iam create-group --group-name root_YMAC_return
-aws iam create-group --group-name YMAC_return_basic
+Make sure you set up your boto config file.
+
 
 # Next we want to create our users
 aws iam create-user cjpoole

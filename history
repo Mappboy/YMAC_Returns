@@ -1,0 +1,193 @@
+ 1  ls /var/www/html/
+    2  ls
+    3  if [ -d /var/www/html/mukurtucms]; then echo 1; else echo ; fi
+    4  if [ -d /var/www/html/mukurtucms ]; then echo 1; else echo ; fi
+    5  users
+    6  man useradd
+    7  useradd -g www-data -G ymac-return -m -s /bin/bash cjpoole
+    8  sudo useradd -g www-data -G ymac-return -m -s /bin/bash cjpoole 
+    9  users
+   10  ls /home
+   11  compgen -u 
+   12  su cjpoole
+   13  man su 
+   14  su cjpoole
+   15  su cjpoole YamatjiReturns
+   16  YamatjiReturns
+   17  services
+   18  service
+   19  cd /var/www/html/
+   20  ls
+   21  cd mukurtucmes
+   22  service
+   23  service --status-all
+   24  mysql 
+   25  mysql -D ymacrom
+   26  mysql -D ymacrom -U cjpoole
+   27  mysql -D ymacrom -U cjpoole -p YamatjiReturns
+   28  mysql -D ymacrom -u cjpoole -p YamatjiReturns
+   29  mysql -D ymacrom -u cjpoole -p
+   30  mysql -D ymacrom -u cjpoole
+   31  mysql 
+   32  sudo mysql_secure_installation
+   33  sudo mysql_install_db
+   34  mysql --version 
+   35  mysqld --initialize
+   36  sudo mysqld --initialize 
+   37  service mysql status
+   38  service apache status 
+   39  service httpd status 
+   40  service list-all
+   41  service -h 
+   42  service --status-all
+   43  service apache2 status 
+   44  cat /etc/mysql/my.cnf 
+   45  ls
+   46  mukurtucms
+   47  cd /etc/apache2/
+   48  ls
+   49  cd sites-enabled/
+   50  ls
+   51  ll
+   52  cat default.conf 
+   53  service apache2 restart
+   54  sudo service apache2 restart 
+   55  sudo chown -R :www-data /var/www/html/* 
+   56  ls
+   57  cat 000-default.conf 
+   58  /var/www/html/mukurtucms
+   59  cd /var/www/html/mukurtucms
+   60  ls
+   61  cd /etc/apache2/mods-enabled/
+   62  ls
+   63  vim dir.conf  
+   64  cd ..
+   65  cd /var/log/ 
+   66  ls
+   67  cd apache2/
+   68  ls
+   69  cat error.log 
+   70  vim /var/www/html/mukurtucms/sites/default/settings.php
+   71  sudo service apache2 restart
+   72  cat error.log 
+   73  vim /var/www/html/mukurtucms/sites/default/settings.php 
+   74  sudo service apache2 restart
+   75  cd /var/www/html/mukurtucms
+   76  ls
+   77  cat index.php 
+   78  ls
+   79  cat install.php 
+   80  ls
+   81  mysql -d ymacrom 
+   82  mysql -D ymacrom 
+   83  mysql -D ymacrom -u root
+   84  mysql -D ymacrom -u root -p
+   85  mysql -D ymacrom -u cjpoole -p
+   86  mysql 
+   87  mysql -p 
+   88  mysql -u root -p 
+   89  ls
+   90  drush -h
+   91  sudo apt-get install drush 
+   92  ls
+   93  cd sites
+   94  ls
+   95  cd all
+   96  ls
+   97  cd libraies
+   98  cd libraries/
+   99  ls
+  100  curl - https://github.com/tnightingale/Leaflet.widget/tarball/master
+  101  curl https://github.com/tnightingale/Leaflet.widget/tarball/master
+  102  curl -L https://github.com/tnightingale/Leaflet.widget/tarball/master
+  103  wget https://github.com/tnightingale/Leaflet.widget/tarball/master
+  104  curl -L -O https://github.com/tnightingale/Leaflet.widget/tarball/master
+  105  sudo curl -L -O https://github.com/tnightingale/Leaflet.widget/tarball/master 
+  106  ls
+  107  cd master
+  108  mv master leaflet-widget.tar.gz 
+  109  sudo mv master leaflet-widget.tar.gz  
+  110  ls
+  111  tar -xzvf leaflet-widget.tar.gz 
+  112  sudo tar -xzvf leaflet-widget.tar.gz  
+  113  ls
+  114  mv tnightingale-Leaflet.widget-5b40011/ leaflet-widget
+  115  sudo mv tnightingale-Leaflet.widget-5b40011/ leaflet-widget 
+  116  ls
+  117  mv leaflet-widget Leaflet.widget
+  118  sudo mv leaflet-widget Leaflet.widget 
+  119  sudo curl https://github.com/Leaflet/Leaflet.draw/archive/master.zip 
+  120  curl -L -O https://github.com/Leaflet/Leaflet.draw/archive/master.zip
+  121  sudo curl -L -O https://github.com/Leaflet/Leaflet.draw/archive/master.zip 
+  122  ls
+  123  unzip master.zip 
+  124  gunzip master.zip 
+  125  sudo apt-get unzip
+  126  sudo apt-get install unzip
+  127  sudo unzip master.zip 
+  128  ls
+  129  mv Leaflet.draw-master/ Leaflet.draw
+  130  sudo mv Leaflet.draw-master/ Leaflet.draw 
+  131  sudo apt-get install drush 
+  132  drush en leaflet_widget -y 
+  133  sudo drush en leaflet_widget -y  
+  134  ls -ltr 
+  135  rm leaflet-widget.tar.gz master.zip 
+  136  sudo rm leaflet-widget.tar.gz master.zip  
+  137  ls
+  138  sudo chown -Rf www-data *
+  139  ls -ltr
+  140  ls
+  141  ls 
+  142  cd ..
+  143  ls
+  144  cd ..
+  145  ls
+  146  cd sites/all/libraries/
+  147  ls
+  148  cd leaflet/
+  149  ls
+  150  head leaflet.js 
+  151  ls
+  152  drush up leaflet
+  153  sudo drush up leaflet 
+  154  drush en update
+  155  sudo drush en update 
+  156  drush pm-update leaflet 
+  157  sudo drush pm-update leaflet  
+  158  drush en Openlayers -y 
+  159  sudo drush en Openlayers -y 
+  160  sudo drush en openlayers -y 
+  161  drush up google_                                                                       
+  162  sudo drush up google_analytics
+  163  drush up scald
+  164  sudo drush up scald 
+  165  sudo drush up search -y 
+  166  sudo drush up search_api -y 
+  167  sudo drush up scald_file -y 
+  168  sudo drush up features -y 
+  169  sudo drush up og -y 
+  170  ls /var/log/apache2/
+  171  cat /var/log/apache2/error.log 
+  172  cd ..
+  173  ls
+  174  cat /var/log/apache2/error.log 
+  175  drush --help
+  176  drush -h
+  177  drush help
+  178  drush pm-update
+  179  ls /tmp/
+  180  ls
+  181  cd ..
+  182  ls
+  183  cd modules
+  184  ls
+  185  cd contrib
+  186  ls
+  187  drush en scald_dailymotion
+  188  sudo drush en scald_dailymotion 
+  189  sudo drush en scald_dailymotion  -y
+  190  sudo drush en scald_vimeo -y 
+  191  drush --listall
+  192  drush pm-list
+  193  history 

@@ -1,0 +1,3 @@
+CREATE DATABASE IF NOT EXISTS ymacrom;
+GRANT ALL ON `ymacrom`.* TO 'user'@'localhost' IDENTIFIED BY 'YamatjiReturns';
+FLUSH PRIVILEGES;
